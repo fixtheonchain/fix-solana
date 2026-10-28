@@ -1,0 +1,16 @@
+[toolchain]
+anchor_version = "0.31.1"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+fix_launchpad = "Fg6PaFpoGXkYsidMpWxTWqkZq6W2BeZ7FEfcYkgMQHG"
+
+[provider]
+cluster = "Localnet"
+wallet = "target/local-fixture-wallet.json"
+
+[workspace]
+members = ["programs/fix-launchpad"]

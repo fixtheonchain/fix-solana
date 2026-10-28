@@ -1,0 +1,7 @@
+target/
+.anchor/
+test-ledger/
+node_modules/
+**/*-keypair.json
+.DS_Store
+Thumbs.db
