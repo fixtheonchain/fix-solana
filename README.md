@@ -148,3 +148,7 @@ cover:
 - extreme curve trades with receipt impact saturating instead of reverting
 
 The program id in `declare_id!` and `Anchor.toml` is the local development id.
+
+## License
+
+Apache License 2.0, in [LICENSE](LICENSE).
