@@ -1,6 +1,6 @@
 #![allow(unexpected_cfgs)]
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{program::{invoke, invoke_signed}, system_instruction};
+use anchor_lang::solana_program::{instruction::{AccountMeta, Instruction}, program::{invoke, invoke_signed}, system_instruction};
 use anchor_spl::token_interface::{self, TransferChecked, Burn};
 use spl_token_2022::{extension::ExtensionType, state::{Mint as SplMint, Account as SplAccount}};
 use spl_token_metadata_interface::state::TokenMetadata;
@@ -8,7 +8,7 @@ use spl_token_metadata_interface::state::TokenMetadata;
 pub mod math;
 pub mod state;
 pub mod contexts;
-pub mod oracle;
+pub mod vanity;
 pub use state::*;
 pub use contexts::*;
 use math::{add, sub, Fees};
@@ -22,7 +22,12 @@ pub mod fix_launchpad {
     pub fn initialize_config(ctx: Context<InitializeConfig>, terms: Terms) -> Result<()> {
         terms.validate()?;
         ctx.accounts.config.set_inner(Config { revision:0, admin: ctx.accounts.admin.key(), pending_admin: Pubkey::default(), paused:false, terms, bump:ctx.bumps.config });
-        ctx.accounts.protocol.set_inner(Protocol { accrued:0, bump:ctx.bumps.protocol });
+        Ok(())
+    }
+    /// Anyone may open a fee shard; its rent stays with the PDA, which no key signs for.
+    pub fn create_protocol_shard(ctx: Context<CreateProtocolShard>, shard: u8) -> Result<()> {
+        require!(shard < PROTOCOL_SHARDS, LaunchError::InvalidProtocolShard);
+        ctx.accounts.protocol.set_inner(Protocol { accrued:0, shard, bump:ctx.bumps.protocol });
         Ok(())
     }
     pub fn update_config(ctx: Context<AdminConfig>, terms: Terms, paused: bool) -> Result<()> {
@@ -37,12 +42,39 @@ pub mod fix_launchpad {
         ctx.accounts.config.pending_admin=new_admin;
         Ok(())
     }
+    /// Admin only. Routed trades through `program_id` pay `recipient` `share_bps` of the protocol part of their fee.
+    pub fn register_extension(ctx: Context<RegisterExtension>, program_id: Pubkey, share_bps: u16, recipient: Pubkey) -> Result<()> {
+        require!(share_bps as u64 <= math::BPS, LaunchError::InvalidExtensionShare);
+        require!(program_id != Pubkey::default() && program_id != crate::ID && recipient != Pubkey::default(), LaunchError::InvalidExtensionAccounts);
+        let authority = Pubkey::find_program_address(&[EXTENSION_AUTHORITY_SEED], &program_id).0;
+        ctx.accounts.extension.set_inner(Extension { program: program_id, authority, recipient, share_bps, paused: false, bump: ctx.bumps.extension });
+        Ok(())
+    }
+    /// Admin only. A paused extension's routed trades are refused; plain trades never read the registry.
+    pub fn set_extension_paused(ctx: Context<AdminExtension>, paused: bool) -> Result<()> {
+        ctx.accounts.extension.paused = paused;
+        Ok(())
+    }
+    /// Admin only. Closes the entry; its rent returns to the admin. Coins, markets and funds are untouched.
+    pub fn remove_extension(_ctx: Context<RemoveExtension>) -> Result<()> { Ok(()) }
     pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
         ctx.accounts.config.admin=ctx.accounts.pending_admin.key();
         ctx.accounts.config.pending_admin=Pubkey::default();
         Ok(())
     }
     pub fn create_coin(ctx: Context<CreateCoin>, name: String, symbol: String, uri: String, expected_config_revision: u64) -> Result<()> {
+        #[cfg(feature="measure-mint-suffix")]
+        let probe_start=anchor_lang::solana_program::compute_units::sol_remaining_compute_units();
+        #[cfg(feature="measure-mint-suffix")]
+        let probe_end=anchor_lang::solana_program::compute_units::sol_remaining_compute_units();
+        #[cfg(feature="measure-mint-suffix")]
+        let suffix_start=anchor_lang::solana_program::compute_units::sol_remaining_compute_units();
+        require!(vanity::has_fix_suffix(ctx.accounts.mint.key().as_ref()),LaunchError::InvalidMintSuffix);
+        #[cfg(feature="measure-mint-suffix")]
+        {
+            let suffix_end=anchor_lang::solana_program::compute_units::sol_remaining_compute_units();
+            msg!("MintSuffixCompute: checked={} probe={}",suffix_start-suffix_end,probe_start-probe_end);
+        }
         require!(!ctx.accounts.config.paused, LaunchError::CreationPaused);
         require!(ctx.accounts.config.revision==expected_config_revision,LaunchError::ConfigChanged);
         require!(!name.is_empty() && name.len()<=64 && !symbol.is_empty() && symbol.len()<=16 && !uri.is_empty() && uri.len()<=256, LaunchError::InvalidMetadata);
@@ -52,6 +84,7 @@ pub mod fix_launchpad {
         let market_key=ctx.accounts.market.key();
         let creator=ctx.accounts.creator.key();
         let terms=ctx.accounts.config.terms;
+        let events=EventSink::new(&ctx.accounts.event_authority,ctx.bumps.event_authority);
         let market=&mut ctx.accounts.market;
         market.mint=mint_key;
         market.creator=creator;
@@ -83,99 +116,37 @@ pub mod fix_launchpad {
         invoke(&spl_token_2022::instruction::initialize_account3(&spl_token_2022::id(),&ctx.accounts.vault.key(),&mint_key,&market_key)?,&[ctx.accounts.vault.to_account_info(),ctx.accounts.mint.to_account_info(),ctx.accounts.token_program.to_account_info()])?;
         invoke_signed(&spl_token_2022::instruction::mint_to_checked(&spl_token_2022::id(),&mint_key,&ctx.accounts.vault.key(),&market_key,&[],terms.total_supply,terms.decimals)?,&[ctx.accounts.mint.to_account_info(),ctx.accounts.vault.to_account_info(),market.to_account_info(),ctx.accounts.token_program.to_account_info()],&[signer])?;
         invoke_signed(&spl_token_2022::instruction::set_authority(&spl_token_2022::id(),&mint_key,None,spl_token_2022::instruction::AuthorityType::MintTokens,&market_key,&[])?,&[ctx.accounts.mint.to_account_info(),market.to_account_info(),ctx.accounts.token_program.to_account_info()],&[signer])?;
-        emit!(CoinCreated { market:market_key,mint:mint_key,creator,terms,name,symbol,uri });
-        oracle::initialize(&mut *ctx.accounts.price_history.load_init()?,market,market_key,ctx.bumps.price_history,now)?;
+        events.emit(&CoinCreated { market:market_key,mint:mint_key,creator,terms,name,symbol,uri })?;
         let price=market.price()?;
-        receipt(market,market_key,creator,0,0,Fees::default(),0,0,0,0,price,Pubkey::default(),now)?;
+        receipt(&events,market,market_key,creator,0,0,Fees::default(),Split::none(),0,0,0,0,price,now)?;
         Ok(())
     }
-    pub fn prepare_position(ctx: Context<PreparePosition>) -> Result<()> {
-        require_keys_eq!(ctx.accounts.payer.key(),ctx.accounts.follower.key(),LaunchError::PositionRentPayerMismatch);
-        require!(Clock::get()?.unix_timestamp<ctx.accounts.call.horizon,LaunchError::CallExpired);
-        let position=&mut ctx.accounts.position;
-        if position.call == Pubkey::default() {
-            require!(ctx.accounts.follower.key()!=ctx.accounts.call.caller,LaunchError::SelfFollow);
-            position.call=ctx.accounts.call.key(); position.market=ctx.accounts.market.key();position.follower=ctx.accounts.follower.key();position.bump=ctx.bumps.position;
-            position.caller=ctx.accounts.call.caller;position.horizon=ctx.accounts.call.horizon;position.rent_payer=ctx.accounts.payer.key();
-            ctx.accounts.call.position_count=add(ctx.accounts.call.position_count,1)?;
-        }
-        Ok(())
-    }
-    pub fn buy_exact_in(ctx: Context<Trade>, gross: u64, min_tokens: u64) -> Result<()> { execute_buy(ctx,gross,None,min_tokens) }
-    pub fn buy_exact_out(ctx: Context<Trade>, tokens: u64, max_gross: u64) -> Result<()> { execute_buy(ctx,max_gross,Some(tokens),tokens) }
-    pub fn sell_exact_in(ctx: Context<Trade>, tokens: u64, min_sol: u64) -> Result<()> { execute_sell(ctx,tokens,None,min_sol) }
-    pub fn sell_exact_out(ctx: Context<Trade>, sol: u64, max_tokens: u64) -> Result<()> { execute_sell(ctx,max_tokens,Some(sol),sol) }
+    // A trade with no remaining accounts is plain. An extension routes one by CPI with three remaining
+    // accounts: its registry entry, its `["fix-extension"]` authority as signer, and its share recipient.
+    pub fn buy_exact_in<'info>(ctx: Context<'_, '_, 'info, 'info, Trade<'info>>, gross: u64, min_tokens: u64) -> Result<()> { execute_buy(ctx,gross,None,min_tokens) }
+    pub fn buy_exact_out<'info>(ctx: Context<'_, '_, 'info, 'info, Trade<'info>>, tokens: u64, max_gross: u64) -> Result<()> { execute_buy(ctx,max_gross,Some(tokens),tokens) }
+    pub fn sell_exact_in<'info>(ctx: Context<'_, '_, 'info, 'info, Trade<'info>>, tokens: u64, min_sol: u64) -> Result<()> { execute_sell(ctx,tokens,None,min_sol) }
+    pub fn sell_exact_out<'info>(ctx: Context<'_, '_, 'info, 'info, Trade<'info>>, sol: u64, max_tokens: u64) -> Result<()> { execute_sell(ctx,max_tokens,Some(sol),sol) }
     pub fn claim_creator_fees(ctx: Context<ClaimCreatorFees>) -> Result<()> {
+        let events=EventSink::new(&ctx.accounts.event_authority,ctx.bumps.event_authority);
         let key=ctx.accounts.market.key();let market=&mut ctx.accounts.market;let amount=market.creator_fees;
         market.creator_fees=0;move_lamports(&market.to_account_info(),&ctx.accounts.creator.to_account_info(),amount)?;
         let price=market.price()?;
-        receipt(market,key,ctx.accounts.creator.key(),3,amount,Fees::default(),amount,0,0,price,price,Pubkey::default(),Clock::get()?.unix_timestamp)?;
+        receipt(&events,market,key,ctx.accounts.creator.key(),3,amount,Fees::default(),Split::none(),amount,0,0,price,price,Clock::get()?.unix_timestamp)?;
         Ok(())
     }
-    pub fn open_call(ctx: Context<OpenCall>, id: u64, horizon_seconds: i64) -> Result<()> {
-        let now=Clock::get()?.unix_timestamp;let key=ctx.accounts.market.key();let market=&ctx.accounts.market;
-        let terms=market.terms;
-        let end=oracle::horizon(now,horizon_seconds,terms.min_horizon,terms.max_horizon)?;
-        let start=end.checked_sub(terms.scoring_window).ok_or(error!(LaunchError::MathOverflow))?;
-        let sequence=&mut ctx.accounts.caller_sequence;
-        if sequence.market==Pubkey::default() {
-            sequence.market=key;sequence.caller=ctx.accounts.caller.key();sequence.bump=ctx.bumps.caller_sequence;
-        }
-        require!(sequence.market==key && sequence.caller==ctx.accounts.caller.key() && sequence.bump==ctx.bumps.caller_sequence,LaunchError::InvalidCall);
-        require!(id==sequence.next_id,LaunchError::CallSequenceChanged);
-        sequence.next_id=add(sequence.next_id,1)?;
-        ctx.accounts.call.set_inner(Call {market:key,caller:ctx.accounts.caller.key(),id,opened_at:now,window_start:start,horizon:end,price_integral:0,price_integral_hi:0,checkpointed:false,evidence_missing:false,position_count:0,follower_count:0,settled_positions:0,earned:0,refunded:0,claimable_payout:0,bump:ctx.bumps.call});
-        emit!(CallOpened {call:ctx.accounts.call.key(),market:key,caller:ctx.accounts.caller.key(),window_start:start,horizon:end});
-        Ok(())
-    }
-    pub fn settle_call(ctx: Context<SettleCall>) -> Result<()> {
-        let now=Clock::get()?.unix_timestamp;let call=&mut ctx.accounts.call;let pos=&mut ctx.accounts.position;
-        if pos.settled {return Ok(());}
-        require!(now>=call.horizon,LaunchError::CallNotMature);
-        require!(ctx.remaining_accounts.is_empty(),LaunchError::InvalidOracleProof);
-        let call_key=call.key();
-        oracle::checkpoint(call,call_key,&ctx.accounts.market,&*ctx.accounts.price_history.load()?,now)?;
-        let value=call.value(pos.tokens,ctx.accounts.market.terms.scoring_window)?;
-        let profitable=!call.evidence_missing && pos.cost>0 && call.is_profitable(pos.tokens,pos.cost,ctx.accounts.market.terms.scoring_window)?;
-        let payout=pos.escrow;
-        let payout_deferred=profitable && payout>0 && !can_receive_lamports(&ctx.accounts.caller.to_account_info(),payout)?;
-        let payee=if payout_deferred {call.claimable_payout=add(call.claimable_payout,payout)?;call.to_account_info()}else if profitable {ctx.accounts.caller.to_account_info()}else{ctx.accounts.follower.to_account_info()};
-        move_lamports(&pos.to_account_info(),&payee,payout)?;
-        pos.escrow=0;pos.settled=true;pos.profitable=profitable;pos.exit_value=value;
-        call.settled_positions=add(call.settled_positions,1)?;
-        if pos.has_activity {call.follower_count=add(call.follower_count,1)?;}
-        if profitable {call.earned=add(call.earned,payout)?;}else{call.refunded=add(call.refunded,payout)?;}
-        emit!(CallSettled {call:call.key(),follower:pos.follower,caller:call.caller,profitable,cost:pos.cost,tokens:pos.tokens,exit_value:value,payout,price_integral:call.price_integral,price_integral_hi:call.price_integral_hi,payout_deferred,evidence_missing:call.evidence_missing});
-        let average=call.average(ctx.accounts.market.terms.scoring_window)?;
-        let market_key=ctx.accounts.market.key();
-        receipt(&mut ctx.accounts.market,market_key,pos.follower,5,payout,Fees::default(),payout,pos.tokens,if profitable {0}else{payout},average,average,call.key(),now)?;
-        Ok(())
-    }
-    pub fn checkpoint_call(ctx:Context<CheckpointCall>)->Result<()> {
-        require!(ctx.remaining_accounts.is_empty(),LaunchError::InvalidOracleProof);
-        let key=ctx.accounts.call.key();
-        oracle::checkpoint(&mut ctx.accounts.call,key,&ctx.accounts.market,&*ctx.accounts.price_history.load()?,Clock::get()?.unix_timestamp)
-    }
-    pub fn close_call(ctx:Context<CloseCall>)->Result<()> {
-        let call=&ctx.accounts.call;require!(Clock::get()?.unix_timestamp>=call.horizon,LaunchError::CallNotMature);
-        require!(call.position_count==call.settled_positions,LaunchError::UnsettledCallPositions);
-        emit!(CallClosed {call:call.key(),caller:call.caller,position_count:call.position_count,earned:call.earned,refunded:call.refunded,payout:call.claimable_payout});Ok(())
-    }
-    pub fn close_position(ctx:Context<ClosePosition>)->Result<()> {
-        let position=&ctx.accounts.position;
-        require!(position.cost==0 && position.tokens==0 && position.escrow==0 && !position.has_activity,LaunchError::PositionStillActive);
-        ctx.accounts.call.settled_positions=add(ctx.accounts.call.settled_positions,1)?;
-        emit!(PositionClosed {call:position.call,follower:position.follower,rent_payer:position.rent_payer});Ok(())
-    }
-    pub fn claim_call_payout(ctx:Context<ClaimCallPayout>)->Result<()> {
-        let call=&mut ctx.accounts.call;let payout=call.claimable_payout;
-        if payout==0 {return Ok(());}
-        require!(can_receive_lamports(&ctx.accounts.caller.to_account_info(),payout)?,LaunchError::RecipientNeedsRent);
-        move_lamports(&call.to_account_info(),&ctx.accounts.caller.to_account_info(),payout)?;
-        call.claimable_payout=0;
-        emit!(CallPayoutClaimed {call:call.key(),caller:call.caller,payout});
-        let key=ctx.accounts.market.key();let price=ctx.accounts.market.price()?;
-        receipt(&mut ctx.accounts.market,key,call.caller,6,payout,Fees::default(),payout,0,0,price,price,call.key(),Clock::get()?.unix_timestamp)?;Ok(())
+
+}
+
+/// Events travel as self-CPI instruction data (Anchor `#[event_cpi]`), which the
+/// runtime records in full. The 10,000-byte log budget can no longer drop them.
+struct EventSink<'info> { authority: AccountInfo<'info>, bump: u8 }
+impl<'info> EventSink<'info> {
+    fn new(authority:&AccountInfo<'info>,bump:u8)->Self { Self { authority:authority.clone(), bump } }
+    fn emit<E:anchor_lang::Event>(&self,event:&E)->Result<()> {
+        let mut data=anchor_lang::event::EVENT_IX_TAG_LE.to_vec();data.extend(event.data());
+        let instruction=Instruction::new_with_bytes(crate::ID,&data,vec![AccountMeta::new_readonly(self.authority.key(),true)]);
+        invoke_signed(&instruction,&[self.authority.clone()],&[&[b"__event_authority",&[self.bump]]]).map_err(Into::into)
     }
 }
 
@@ -205,23 +176,38 @@ fn move_lamports(from:&AccountInfo,to:&AccountInfo,amount:u64)->Result<()> {
     let destination=to.lamports().checked_add(amount).ok_or(error!(LaunchError::MathOverflow))?;
     **from.try_borrow_mut_lamports()?=remaining;**to.try_borrow_mut_lamports()?=destination;Ok(())
 }
-fn can_receive_lamports(destination:&AccountInfo,amount:u64)->Result<bool> {
-    let after=destination.lamports().checked_add(amount).ok_or(error!(LaunchError::MathOverflow))?;
-    Ok(after>=Rent::get()?.minimum_balance(destination.data_len()))
-}
 fn credit_protocol(market:&Account<Market>,protocol:&mut Account<Protocol>,amount:u64)->Result<()> {
     move_lamports(&market.to_account_info(),&protocol.to_account_info(),amount)?;
     protocol.accrued=add(protocol.accrued,amount)?;Ok(())
 }
-fn check_tag(pos:&Option<Account<CallPosition>>,market:Pubkey,trader:Pubkey,now:i64)->Result<Pubkey> {
-    let Some(pos)=pos else{return Ok(Pubkey::default());};
-    require!(pos.market==market && pos.follower==trader && pos.rent_payer==trader,LaunchError::InvalidCall);
-    let expected=Pubkey::find_program_address(&[b"position",pos.call.as_ref(),trader.as_ref()],&crate::ID).0;
-    require_keys_eq!(pos.key(),expected,LaunchError::InvalidCall);
-    require!(pos.caller!=trader,LaunchError::SelfFollow);require!(now<pos.horizon,LaunchError::CallExpired);require!(!pos.settled,LaunchError::PositionSettled);Ok(pos.call)
-}
 
-fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16,tagged:bool)->Result<(u64,u64,Fees)> {
+/// The extension routing a trade, proven by its three remaining accounts. Anything else in that
+/// position is refused by name; a plain trade passes none.
+struct Route<'info> { program: Pubkey, share_bps: u16, recipient: AccountInfo<'info> }
+fn route<'info>(remaining:&'info [AccountInfo<'info>])->Result<Option<Route<'info>>> {
+    let (entry,authority,recipient)=match remaining { [] => return Ok(None), [entry,authority,recipient] => (entry,authority,recipient), _ => return err!(LaunchError::InvalidExtensionAccounts) };
+    // Only register_extension creates Extension accounts, at their PDA; a removed entry is closed.
+    if entry.owner!=&crate::ID {return err!(LaunchError::ExtensionNotRegistered);}
+    let extension=Account::<Extension>::try_from(entry).map_err(|_|error!(LaunchError::ExtensionNotRegistered))?;
+    require!(!extension.paused,LaunchError::ExtensionPaused);
+    // Only the extension program can sign as a PDA derived under it, so the call came from that program.
+    require!(authority.is_signer && authority.key()==extension.authority,LaunchError::ExtensionAuthorityInvalid);
+    require!(recipient.is_writable && recipient.key()==extension.recipient,LaunchError::ExtensionRecipientMismatch);
+    Ok(Some(Route { program:extension.program, share_bps:extension.share_bps, recipient:recipient.clone() }))
+}
+/// The protocol part of a fee as booked: the protocol's line and the routing extension's line.
+struct Split { protocol: u64, extension: Pubkey, extension_fee: u64 }
+impl Split { fn none() -> Self { Self { protocol:0, extension:Pubkey::default(), extension_fee:0 } } }
+/// Pays the protocol part in the instruction that charges it: the extension's share to its recipient,
+/// the rest to the protocol shard. The trader, the creator and the pool see the same amounts either way.
+fn pay_protocol<'info>(market:&Account<'info,Market>,protocol:&mut Account<'info,Protocol>,route:&Option<Route<'info>>,fees:Fees)->Result<Split> {
+    let (extension,extension_fee)=match route { Some(r) => (r.program,math::mul_div(fees.protocol,r.share_bps as u64,math::BPS)?), None => (Pubkey::default(),0) };
+    let kept=sub(fees.protocol,extension_fee)?;
+    credit_protocol(market,protocol,kept)?;
+    if let Some(r)=route { move_lamports(&market.to_account_info(),&r.recipient,extension_fee)?; }
+    Ok(Split { protocol:kept, extension, extension_fee })
+}
+fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16)->Result<(u64,u64,Fees)> {
     if budget==0 && exact_out.is_none() {return Ok((0,0,Fees::default()));}
     let cap=if market.phase==POOL {market.pool_tokens.saturating_sub(1)}else{market.curve_remaining};
     if let Some(out)=exact_out {
@@ -229,16 +215,16 @@ fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16,tagged:boo
         let required=if market.phase==POOL {math::pool_buy_net(market.real_sol,market.pool_token_num,market.pool_token_den,out)?}else{math::curve_buy_net(market.virtual_sol,market.virtual_token,out)?};
         let gross=math::gross_for_net(required,rate)?;
         require!(gross<=budget,LaunchError::SlippageExceeded);
-        return Ok((gross,out,math::fees(gross,rate,&market.terms,tagged)?));
+        return Ok((gross,out,math::fees(gross,rate,&market.terms)?));
     }
     if market.phase!=POOL {
         let maximum_net=math::curve_buy_net(market.virtual_sol,market.virtual_token,cap)?;
         if let Ok(maximum_gross)=math::gross_for_net(maximum_net,rate) {
-            if budget>=maximum_gross {return Ok((maximum_gross,cap,math::fees(maximum_gross,rate,&market.terms,tagged)?));}
+            if budget>=maximum_gross {return Ok((maximum_gross,cap,math::fees(maximum_gross,rate,&market.terms)?));}
         }
     }
     let mut gross=budget;
-    let mut fees=math::fees(gross,rate,&market.terms,tagged)?;
+    let mut fees=math::fees(gross,rate,&market.terms)?;
     let net=gross-fees.total;
     let mut out=if market.phase==POOL {math::pool_buy_out(market.real_sol,market.pool_token_num,market.pool_token_den,net)?}else{math::curve_buy_out(market.virtual_sol,market.virtual_token,net)?};
     out=out.min(cap);
@@ -247,7 +233,7 @@ fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16,tagged:boo
         let required=if market.phase==POOL {math::pool_buy_net(market.real_sol,market.pool_token_num,market.pool_token_den,out)?}else{math::curve_buy_net(market.virtual_sol,market.virtual_token,out)?};
         gross=math::gross_for_net(required,rate)?;
         require!(gross<=budget,LaunchError::SlippageExceeded);
-        fees=math::fees(gross,rate,&market.terms,tagged)?;
+        fees=math::fees(gross,rate,&market.terms)?;
     }
     Ok((gross,out,fees))
 }
@@ -260,32 +246,30 @@ fn apply_buy(market:&mut Market,gross:u64,out:u64,fees:Fees)->Result<()> {
     }else{market.virtual_sol=add(market.virtual_sol,reserve_in)?;market.virtual_token=sub(market.virtual_token,out)?;market.curve_remaining=sub(market.curve_remaining,out)?;}
     Ok(())
 }
-fn execute_buy(ctx:Context<Trade>,budget:u64,exact_out:Option<u64>,min_tokens:u64)->Result<()> {
+fn execute_buy<'info>(ctx:Context<'_,'_,'info,'info,Trade<'info>>,budget:u64,exact_out:Option<u64>,min_tokens:u64)->Result<()> {
+    let events=EventSink::new(&ctx.accounts.event_authority,ctx.bumps.event_authority);
+    let routed=route(ctx.remaining_accounts)?;let via=routed.as_ref().map_or(Pubkey::default(),|r|r.program);
     let clock=Clock::get()?;let now=clock.unix_timestamp;let key=ctx.accounts.market.key();let trader=ctx.accounts.trader.key();let market=&mut ctx.accounts.market;
     require!(clock.slot>market.created_slot,LaunchError::BuyNotOpen);
     require!(budget>0,LaunchError::ZeroAmount);
-    let tag=check_tag(&ctx.accounts.position,key,trader,now)?;
     let before=market.price()?;
-    let (gross,out,fees)=quote_buy(market,budget,exact_out,market.rate(),tag!=Pubkey::default())?;
+    let (gross,out,fees)=quote_buy(market,budget,exact_out,market.rate())?;
     require!(out>0 && out>=min_tokens,LaunchError::SlippageExceeded);
     transfer_in(&ctx.accounts.trader.to_account_info(),&market.to_account_info(),&ctx.accounts.system_program.to_account_info(),gross)?;
     apply_buy(market,gross,out,fees)?;
     market.creator_fees=add(market.creator_fees,fees.creator)?;
-    if let Some(pos)=ctx.accounts.position.as_mut() { pos.has_activity=true;pos.cost=add(pos.cost,gross)?;pos.tokens=add(pos.tokens,out)?;pos.escrow=add(pos.escrow,fees.call)?; }
     let bump=[market.bump];let mint=market.mint;let seeds:&[&[u8]]=&[b"market",mint.as_ref(),&bump];
     token_interface::transfer_checked(CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(),TransferChecked {from:ctx.accounts.vault.to_account_info(),mint:ctx.accounts.mint.to_account_info(),to:ctx.accounts.trader_token.to_account_info(),authority:market.to_account_info()},&[seeds]),out,market.terms.decimals)?;
-    if market.phase==CURVE && market.curve_remaining==0 {graduate(market,key,&ctx.accounts.mint.to_account_info(),&ctx.accounts.vault.to_account_info(),&ctx.accounts.token_program.to_account_info(),now)?;}
-    credit_protocol(market,&mut ctx.accounts.protocol,fees.protocol)?;
-    if let Some(pos)=ctx.accounts.position.as_ref() {move_lamports(&market.to_account_info(),&pos.to_account_info(),fees.call)?;}
-    require!(ctx.remaining_accounts.is_empty(),LaunchError::InvalidOracleProof);
-    oracle::record(market,key,&mut *ctx.accounts.price_history.load_mut()?,now)?;
+    if market.phase==CURVE && market.curve_remaining==0 {graduate(&events,via,market,key,&ctx.accounts.mint.to_account_info(),&ctx.accounts.vault.to_account_info(),&ctx.accounts.token_program.to_account_info(),now)?;}
+    let split=pay_protocol(market,&mut ctx.accounts.protocol,&routed,fees)?;
     let after=market.price()?;let refund=if exact_out.is_none(){budget-gross}else{0};
-    receipt(market,key,trader,1,gross,fees,gross-fees.total,out,refund,before,after,tag,now)?;Ok(())
+    receipt(&events,market,key,trader,1,gross,fees,split,gross-fees.total,out,refund,before,after,now)?;Ok(())
 }
-fn execute_sell(ctx:Context<Trade>,budget:u64,exact_out:Option<u64>,min_sol:u64)->Result<()> {
+fn execute_sell<'info>(ctx:Context<'_,'_,'info,'info,Trade<'info>>,budget:u64,exact_out:Option<u64>,min_sol:u64)->Result<()> {
+    let events=EventSink::new(&ctx.accounts.event_authority,ctx.bumps.event_authority);
+    let routed=route(ctx.remaining_accounts)?;
     let now=Clock::get()?.unix_timestamp;let key=ctx.accounts.market.key();let trader=ctx.accounts.trader.key();let market=&mut ctx.accounts.market;
     require!(budget>0,LaunchError::ZeroAmount);
-    require!(ctx.accounts.position.is_none(),LaunchError::InvalidCall);
     let before=market.price()?;let rate=market.rate();let mut input=budget;
     let gross;
     let net=if let Some(wanted)=exact_out {
@@ -294,25 +278,23 @@ fn execute_sell(ctx:Context<Trade>,budget:u64,exact_out:Option<u64>,min_sol:u64)
         require!(input<=budget,LaunchError::SlippageExceeded);wanted
     }else{
         gross=if market.phase==POOL {math::pool_sell_out(market.real_sol,market.pool_token_num,market.pool_token_den,input)?}else{math::curve_sell_out(market.virtual_sol,market.virtual_token,input)?};
-        gross-math::fees(gross,rate,&market.terms,false)?.total
+        gross-math::fees(gross,rate,&market.terms)?.total
     };
     require!(net>=min_sol && net>0,LaunchError::SlippageExceeded);
-    let fees=math::fees(gross,rate,&market.terms,false)?;
+    let fees=math::fees(gross,rate,&market.terms)?;
     require!(gross<=market.real_sol,LaunchError::InsufficientLiquidity);
     token_interface::transfer_checked(CpiContext::new(ctx.accounts.token_program.to_account_info(),TransferChecked {from:ctx.accounts.trader_token.to_account_info(),mint:ctx.accounts.mint.to_account_info(),to:ctx.accounts.vault.to_account_info(),authority:ctx.accounts.trader.to_account_info()}),input,market.terms.decimals)?;
     let reserve_out=gross-fees.pool;
     market.real_sol=sub(market.real_sol,reserve_out)?;
     if market.phase==POOL {market.pool_token_num=market.pool_token_num.checked_add((input as u128)*market.pool_token_den as u128).ok_or(error!(LaunchError::MathOverflow))?;market.pool_tokens=add(market.pool_tokens,input)?;}
     else{market.virtual_sol=sub(market.virtual_sol,reserve_out)?;market.virtual_token=add(market.virtual_token,input)?;market.curve_remaining=add(market.curve_remaining,input)?;require!(market.curve_remaining<=market.terms.curve_tokens,LaunchError::InsufficientLiquidity);}
-    market.creator_fees=add(market.creator_fees,fees.creator)?;credit_protocol(market,&mut ctx.accounts.protocol,fees.protocol)?;
+    market.creator_fees=add(market.creator_fees,fees.creator)?;let split=pay_protocol(market,&mut ctx.accounts.protocol,&routed,fees)?;
     move_lamports(&market.to_account_info(),&ctx.accounts.trader.to_account_info(),net)?;
-    require!(ctx.remaining_accounts.is_empty(),LaunchError::InvalidOracleProof);
-    oracle::record(market,key,&mut *ctx.accounts.price_history.load_mut()?,now)?;
     let after=market.price()?;
-    receipt(market,key,trader,2,gross,fees,net,input,0,before,after,Pubkey::default(),now)?;Ok(())
+    receipt(&events,market,key,trader,2,gross,fees,split,net,input,0,before,after,now)?;Ok(())
 }
 
-fn graduate<'info>(market:&mut Account<'info,Market>,key:Pubkey,mint:&AccountInfo<'info>,vault:&AccountInfo<'info>,token_program:&AccountInfo<'info>,now:i64)->Result<()> {
+fn graduate<'info>(events:&EventSink<'info>,via:Pubkey,market:&mut Account<'info,Market>,key:Pubkey,mint:&AccountInfo<'info>,vault:&AccountInfo<'info>,token_program:&AccountInfo<'info>,now:i64)->Result<()> {
     let before=market.price()?;
     require!(market.real_sol>0 && market.virtual_token>0,LaunchError::InsufficientLiquidity);
     let numerator=(market.real_sol as u128)*(market.virtual_token as u128);
@@ -328,14 +310,15 @@ fn graduate<'info>(market:&mut Account<'info,Market>,key:Pubkey,mint:&AccountInf
     }
     market.pool_token_num=numerator;market.pool_token_den=denominator;market.pool_tokens=reserve;market.burned_tokens=burn;market.phase=POOL;
     let after=market.price()?;
-    emit!(Graduated {market:key,real_sol:market.real_sol,token_reserve:reserve,token_numerator:numerator,token_denominator:denominator,burned:burn,last_curve_price:before,pool_price:after});
-    receipt(market,key,Pubkey::default(),4,0,Fees::default(),0,burn,0,before,after,Pubkey::default(),now)?;Ok(())
+    events.emit(&Graduated {market:key,real_sol:market.real_sol,token_reserve:reserve,token_numerator:numerator,token_denominator:denominator,burned:burn,last_curve_price:before,pool_price:after})?;
+    // The graduation receipt names the route of the buy that caused it; it carries no fee.
+    receipt(events,market,key,Pubkey::default(),4,0,Fees::default(),Split { extension:via, ..Split::none() },0,burn,0,before,after,now)?;Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn receipt(market:&mut Market,key:Pubkey,actor:Pubkey,action:u8,gross:u64,fees:Fees,net:u64,tokens:u64,refund:u64,before:u128,after:u128,call:Pubkey,now:i64)->Result<()> {
+fn receipt(events:&EventSink,market:&mut Market,key:Pubkey,actor:Pubkey,action:u8,gross:u64,fees:Fees,split:Split,net:u64,tokens:u64,refund:u64,before:u128,after:u128,now:i64)->Result<()> {
     market.receipt_sequence=add(market.receipt_sequence,1)?;
-    emit!(Receipt {market:key,actor,action,phase:market.phase,sequence:market.receipt_sequence,timestamp:now,is_creator:actor==market.creator,gross,protocol_fee:fees.protocol,creator_fee:fees.creator,call_fee:fees.call,pool_fee:fees.pool,net,tokens,refund,price_before:before,price_after:after,price_impact_bps:math::impact(before,after)?,call});Ok(())
+    events.emit(&Receipt {market:key,actor,action,phase:market.phase,sequence:market.receipt_sequence,timestamp:now,is_creator:actor==market.creator,gross,protocol_fee:split.protocol,creator_fee:fees.creator,pool_fee:fees.pool,net,tokens,refund,price_before:before,price_after:after,price_impact_bps:math::impact(before,after)?,extension:split.extension,extension_fee:split.extension_fee})
 }
 
 #[error_code]
@@ -347,20 +330,15 @@ pub enum LaunchError {
     #[msg("Amount must be positive")] ZeroAmount,
     #[msg("Slippage bound would be exceeded")] SlippageExceeded,
     #[msg("Insufficient backed liquidity")] InsufficientLiquidity,
-    #[msg("A caller cannot tag their own trade")] SelfFollow,
-    #[msg("Invalid call or follower position")] InvalidCall,
-    #[msg("Call horizon has elapsed")] CallExpired,
-    #[msg("Call position already settled")] PositionSettled,
-    #[msg("Call horizon is outside the market's locked bounds")] InvalidHorizon,
-    #[msg("Call horizon has not elapsed")] CallNotMature,
-    #[msg("Clock moved backwards")] ClockWentBackwards,
     #[msg("Authority is not authorized")] Unauthorized,
     #[msg("Configuration changed since the creation preview")] ConfigChanged,
-    #[msg("Price-history proof does not bracket the exact window edges")] InvalidOracleProof,
-    #[msg("Every registered call position must settle before closing")] UnsettledCallPositions,
-    #[msg("The follower must pay their own position account rent")] PositionRentPayerMismatch,
-    #[msg("This caller's call sequence changed; rebuild with their next call ID")] CallSequenceChanged,
-    #[msg("An active position must settle at its horizon before closing")] PositionStillActive,
-    #[msg("The payout recipient must be rent-exempt; fund it or close the completed call to receive its rent and payout together")] RecipientNeedsRent,
     #[msg("Buying opens in the slot after coin creation")] BuyNotOpen,
+    #[msg("Mint address must end in lowercase fix")] InvalidMintSuffix,
+    #[msg("Protocol fee shard is out of range")] InvalidProtocolShard,
+    #[msg("A routed trade takes exactly three extension accounts")] InvalidExtensionAccounts,
+    #[msg("The extension is not registered")] ExtensionNotRegistered,
+    #[msg("The extension is paused")] ExtensionPaused,
+    #[msg("The extension authority is not its signing PDA")] ExtensionAuthorityInvalid,
+    #[msg("The share account is not the extension's recipient")] ExtensionRecipientMismatch,
+    #[msg("An extension share is at most 10,000 bps of the protocol part")] InvalidExtensionShare,
 }

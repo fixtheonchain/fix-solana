@@ -139,34 +139,11 @@
                   111,
                   108
                 ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "position",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "price_history",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  105,
-                  99,
-                  101,
-                  115
-                ]
               },
               {
                 "kind": "account",
-                "path": "market"
+                "path": "protocol.shard",
+                "account": "Protocol"
               }
             ]
           }
@@ -178,6 +155,38 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
         }
       ],
       "args": [
@@ -282,34 +291,11 @@
                   111,
                   108
                 ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "position",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "price_history",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  105,
-                  99,
-                  101,
-                  115
-                ]
               },
               {
                 "kind": "account",
-                "path": "market"
+                "path": "protocol.shard",
+                "account": "Protocol"
               }
             ]
           }
@@ -321,6 +307,38 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
         }
       ],
       "args": [
@@ -333,136 +351,6 @@
           "type": "u64"
         }
       ]
-    },
-    {
-      "name": "checkpoint_call",
-      "discriminator": [
-        207,
-        101,
-        155,
-        14,
-        189,
-        93,
-        153,
-        210
-      ],
-      "accounts": [
-        {
-          "name": "settler",
-          "signer": true
-        },
-        {
-          "name": "market",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  97,
-                  114,
-                  107,
-                  101,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.mint",
-                "account": "Market"
-              }
-            ]
-          },
-          "relations": [
-            "call"
-          ]
-        },
-        {
-          "name": "call",
-          "writable": true
-        },
-        {
-          "name": "price_history",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  105,
-                  99,
-                  101,
-                  115
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market"
-              }
-            ]
-          }
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "claim_call_payout",
-      "discriminator": [
-        72,
-        202,
-        131,
-        14,
-        74,
-        156,
-        233,
-        128
-      ],
-      "accounts": [
-        {
-          "name": "settler",
-          "signer": true
-        },
-        {
-          "name": "market",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  97,
-                  114,
-                  107,
-                  101,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.mint",
-                "account": "Market"
-              }
-            ]
-          },
-          "relations": [
-            "call"
-          ]
-        },
-        {
-          "name": "call",
-          "writable": true
-        },
-        {
-          "name": "caller",
-          "writable": true,
-          "relations": [
-            "call"
-          ]
-        }
-      ],
-      "args": []
     },
     {
       "name": "claim_creator_fees",
@@ -508,94 +396,38 @@
               }
             ]
           }
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "close_call",
-      "discriminator": [
-        117,
-        97,
-        120,
-        252,
-        217,
-        142,
-        7,
-        207
-      ],
-      "accounts": [
-        {
-          "name": "caller",
-          "writable": true,
-          "signer": true,
-          "relations": [
-            "call"
-          ]
         },
         {
-          "name": "call",
-          "writable": true
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "close_position",
-      "discriminator": [
-        123,
-        134,
-        81,
-        0,
-        49,
-        68,
-        98,
-        98
-      ],
-      "accounts": [
-        {
-          "name": "follower",
-          "writable": true,
-          "signer": true,
-          "relations": [
-            "position"
-          ]
-        },
-        {
-          "name": "call",
-          "writable": true,
-          "relations": [
-            "position"
-          ]
-        },
-        {
-          "name": "position",
-          "writable": true,
+          "name": "event_authority",
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  112,
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
                   111,
-                  115,
+                  114,
                   105,
                   116,
-                  105,
-                  111,
-                  110
+                  121
                 ]
-              },
-              {
-                "kind": "account",
-                "path": "call"
-              },
-              {
-                "kind": "account",
-                "path": "follower"
               }
             ]
           }
+        },
+        {
+          "name": "program"
         }
       ],
       "args": []
@@ -665,29 +497,6 @@
           }
         },
         {
-          "name": "price_history",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  105,
-                  99,
-                  101,
-                  115
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market"
-              }
-            ]
-          }
-        },
-        {
           "name": "vault",
           "writable": true,
           "pda": {
@@ -716,6 +525,38 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
         }
       ],
       "args": [
@@ -734,6 +575,64 @@
         {
           "name": "expected_config_revision",
           "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "create_protocol_shard",
+      "docs": [
+        "Anyone may open a fee shard; its rent stays with the PDA, which no key signs for."
+      ],
+      "discriminator": [
+        222,
+        18,
+        131,
+        52,
+        202,
+        56,
+        145,
+        78
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "protocol",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "shard"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "shard",
+          "type": "u8"
         }
       ]
     },
@@ -782,27 +681,6 @@
           }
         },
         {
-          "name": "protocol",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  111,
-                  116,
-                  111,
-                  99,
-                  111,
-                  108
-                ]
-              }
-            ]
-          }
-        },
-        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -817,213 +695,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "open_call",
-      "discriminator": [
-        153,
-        26,
-        89,
-        45,
-        252,
-        243,
-        183,
-        62
-      ],
-      "accounts": [
-        {
-          "name": "caller",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "market",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  97,
-                  114,
-                  107,
-                  101,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.mint",
-                "account": "Market"
-              }
-            ]
-          }
-        },
-        {
-          "name": "caller_sequence",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  97,
-                  108,
-                  108,
-                  45,
-                  115,
-                  101,
-                  113,
-                  117,
-                  101,
-                  110,
-                  99,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market"
-              },
-              {
-                "kind": "account",
-                "path": "caller"
-              }
-            ]
-          }
-        },
-        {
-          "name": "call",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  97,
-                  108,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market"
-              },
-              {
-                "kind": "account",
-                "path": "caller"
-              },
-              {
-                "kind": "arg",
-                "path": "id"
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "id",
-          "type": "u64"
-        },
-        {
-          "name": "horizon_seconds",
-          "type": "i64"
-        }
-      ]
-    },
-    {
-      "name": "prepare_position",
-      "discriminator": [
-        178,
-        215,
-        55,
-        90,
-        137,
-        15,
-        108,
-        15
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "follower"
-        },
-        {
-          "name": "market",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  97,
-                  114,
-                  107,
-                  101,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.mint",
-                "account": "Market"
-              }
-            ]
-          },
-          "relations": [
-            "call"
-          ]
-        },
-        {
-          "name": "call",
-          "writable": true
-        },
-        {
-          "name": "position",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  115,
-                  105,
-                  116,
-                  105,
-                  111,
-                  110
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "call"
-              },
-              {
-                "kind": "account",
-                "path": "follower"
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
     },
     {
       "name": "propose_admin",
@@ -1071,6 +742,166 @@
           "type": "pubkey"
         }
       ]
+    },
+    {
+      "name": "register_extension",
+      "docs": [
+        "Admin only. Routed trades through `program_id` pay `recipient` `share_bps` of the protocol part of their fee."
+      ],
+      "discriminator": [
+        158,
+        205,
+        4,
+        17,
+        6,
+        106,
+        172,
+        148
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "extension",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  116,
+                  101,
+                  110,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "program_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "program_id",
+          "type": "pubkey"
+        },
+        {
+          "name": "share_bps",
+          "type": "u16"
+        },
+        {
+          "name": "recipient",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "remove_extension",
+      "docs": [
+        "Admin only. Closes the entry; its rent returns to the admin. Coins, markets and funds are untouched."
+      ],
+      "discriminator": [
+        9,
+        147,
+        5,
+        33,
+        159,
+        34,
+        9,
+        43
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "extension",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  116,
+                  101,
+                  110,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "extension.program",
+                "account": "Extension"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
     },
     {
       "name": "sell_exact_in",
@@ -1163,34 +994,11 @@
                   111,
                   108
                 ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "position",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "price_history",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  105,
-                  99,
-                  101,
-                  115
-                ]
               },
               {
                 "kind": "account",
-                "path": "market"
+                "path": "protocol.shard",
+                "account": "Protocol"
               }
             ]
           }
@@ -1202,6 +1010,38 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
         }
       ],
       "args": [
@@ -1306,34 +1146,11 @@
                   111,
                   108
                 ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "position",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "price_history",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  105,
-                  99,
-                  101,
-                  115
-                ]
               },
               {
                 "kind": "account",
-                "path": "market"
+                "path": "protocol.shard",
+                "account": "Protocol"
               }
             ]
           }
@@ -1345,6 +1162,38 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
         }
       ],
       "args": [
@@ -1359,92 +1208,60 @@
       ]
     },
     {
-      "name": "settle_call",
+      "name": "set_extension_paused",
+      "docs": [
+        "Admin only. A paused extension's routed trades are refused; plain trades never read the registry."
+      ],
       "discriminator": [
-        58,
-        230,
-        6,
-        58,
-        104,
-        245,
-        154,
-        227
+        77,
+        76,
+        219,
+        208,
+        98,
+        55,
+        19,
+        135
       ],
       "accounts": [
         {
-          "name": "settler",
-          "signer": true
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
         },
         {
-          "name": "market",
-          "writable": true,
+          "name": "config",
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  109,
-                  97,
-                  114,
-                  107,
-                  101,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.mint",
-                "account": "Market"
-              }
-            ]
-          },
-          "relations": [
-            "call",
-            "position"
-          ]
-        },
-        {
-          "name": "call",
-          "writable": true,
-          "relations": [
-            "position"
-          ]
-        },
-        {
-          "name": "price_history",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  105,
                   99,
-                  101,
-                  115
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
                 ]
-              },
-              {
-                "kind": "account",
-                "path": "market"
               }
             ]
           }
         },
         {
-          "name": "position",
+          "name": "extension",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  112,
-                  111,
-                  115,
-                  105,
+                  101,
+                  120,
                   116,
+                  101,
+                  110,
+                  115,
                   105,
                   111,
                   110
@@ -1452,31 +1269,19 @@
               },
               {
                 "kind": "account",
-                "path": "call"
-              },
-              {
-                "kind": "account",
-                "path": "follower"
+                "path": "extension.program",
+                "account": "Extension"
               }
             ]
           }
-        },
-        {
-          "name": "caller",
-          "writable": true,
-          "relations": [
-            "call"
-          ]
-        },
-        {
-          "name": "follower",
-          "writable": true,
-          "relations": [
-            "position"
-          ]
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
     },
     {
       "name": "update_config",
@@ -1536,45 +1341,6 @@
   ],
   "accounts": [
     {
-      "name": "Call",
-      "discriminator": [
-        62,
-        231,
-        169,
-        58,
-        154,
-        150,
-        83,
-        196
-      ]
-    },
-    {
-      "name": "CallPosition",
-      "discriminator": [
-        63,
-        201,
-        180,
-        80,
-        116,
-        102,
-        162,
-        130
-      ]
-    },
-    {
-      "name": "CallerSequence",
-      "discriminator": [
-        157,
-        67,
-        165,
-        135,
-        32,
-        61,
-        249,
-        208
-      ]
-    },
-    {
       "name": "Config",
       "discriminator": [
         155,
@@ -1588,6 +1354,19 @@
       ]
     },
     {
+      "name": "Extension",
+      "discriminator": [
+        141,
+        183,
+        126,
+        42,
+        23,
+        237,
+        11,
+        5
+      ]
+    },
+    {
       "name": "Market",
       "discriminator": [
         219,
@@ -1598,19 +1377,6 @@
         227,
         198,
         154
-      ]
-    },
-    {
-      "name": "PriceHistory",
-      "discriminator": [
-        38,
-        241,
-        40,
-        19,
-        42,
-        228,
-        93,
-        152
       ]
     },
     {
@@ -1628,71 +1394,6 @@
     }
   ],
   "events": [
-    {
-      "name": "CallCheckpointed",
-      "discriminator": [
-        204,
-        236,
-        165,
-        114,
-        62,
-        184,
-        158,
-        212
-      ]
-    },
-    {
-      "name": "CallClosed",
-      "discriminator": [
-        78,
-        30,
-        87,
-        200,
-        73,
-        15,
-        226,
-        15
-      ]
-    },
-    {
-      "name": "CallOpened",
-      "discriminator": [
-        80,
-        97,
-        83,
-        218,
-        46,
-        113,
-        128,
-        51
-      ]
-    },
-    {
-      "name": "CallPayoutClaimed",
-      "discriminator": [
-        51,
-        231,
-        118,
-        66,
-        165,
-        149,
-        53,
-        228
-      ]
-    },
-    {
-      "name": "CallSettled",
-      "discriminator": [
-        240,
-        201,
-        54,
-        197,
-        132,
-        33,
-        150,
-        213
-      ]
-    },
     {
       "name": "CoinCreated",
       "discriminator": [
@@ -1717,32 +1418,6 @@
         245,
         156,
         192
-      ]
-    },
-    {
-      "name": "PositionClosed",
-      "discriminator": [
-        157,
-        163,
-        227,
-        228,
-        13,
-        97,
-        138,
-        121
-      ]
-    },
-    {
-      "name": "PriceRecorded",
-      "discriminator": [
-        107,
-        12,
-        17,
-        105,
-        161,
-        231,
-        5,
-        164
       ]
     },
     {
@@ -1797,430 +1472,61 @@
     },
     {
       "code": 6007,
-      "name": "SelfFollow",
-      "msg": "A caller cannot tag their own trade"
-    },
-    {
-      "code": 6008,
-      "name": "InvalidCall",
-      "msg": "Invalid call or follower position"
-    },
-    {
-      "code": 6009,
-      "name": "CallExpired",
-      "msg": "Call horizon has elapsed"
-    },
-    {
-      "code": 6010,
-      "name": "PositionSettled",
-      "msg": "Call position already settled"
-    },
-    {
-      "code": 6011,
-      "name": "InvalidHorizon",
-      "msg": "Call horizon is outside the market's locked bounds"
-    },
-    {
-      "code": 6012,
-      "name": "CallNotMature",
-      "msg": "Call horizon has not elapsed"
-    },
-    {
-      "code": 6013,
-      "name": "ClockWentBackwards",
-      "msg": "Clock moved backwards"
-    },
-    {
-      "code": 6014,
       "name": "Unauthorized",
       "msg": "Authority is not authorized"
     },
     {
-      "code": 6015,
+      "code": 6008,
       "name": "ConfigChanged",
       "msg": "Configuration changed since the creation preview"
     },
     {
+      "code": 6009,
+      "name": "BuyNotOpen",
+      "msg": "Buying opens in the slot after coin creation"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidMintSuffix",
+      "msg": "Mint address must end in lowercase fix"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidProtocolShard",
+      "msg": "Protocol fee shard is out of range"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidExtensionAccounts",
+      "msg": "A routed trade takes exactly three extension accounts"
+    },
+    {
+      "code": 6013,
+      "name": "ExtensionNotRegistered",
+      "msg": "The extension is not registered"
+    },
+    {
+      "code": 6014,
+      "name": "ExtensionPaused",
+      "msg": "The extension is paused"
+    },
+    {
+      "code": 6015,
+      "name": "ExtensionAuthorityInvalid",
+      "msg": "The extension authority is not its signing PDA"
+    },
+    {
       "code": 6016,
-      "name": "InvalidOracleProof",
-      "msg": "Price-history proof does not bracket the exact window edges"
+      "name": "ExtensionRecipientMismatch",
+      "msg": "The share account is not the extension's recipient"
     },
     {
       "code": 6017,
-      "name": "UnsettledCallPositions",
-      "msg": "Every registered call position must settle before closing"
-    },
-    {
-      "code": 6018,
-      "name": "PositionRentPayerMismatch",
-      "msg": "The follower must pay their own position account rent"
-    },
-    {
-      "code": 6019,
-      "name": "CallSequenceChanged",
-      "msg": "This caller's call sequence changed; rebuild with their next call ID"
-    },
-    {
-      "code": 6020,
-      "name": "PositionStillActive",
-      "msg": "An active position must settle at its horizon before closing"
-    },
-    {
-      "code": 6021,
-      "name": "RecipientNeedsRent",
-      "msg": "The payout recipient must be rent-exempt; fund it or close the completed call to receive its rent and payout together"
-    },
-    {
-      "code": 6022,
-      "name": "BuyNotOpen",
-      "msg": "Buying opens in the slot after coin creation"
+      "name": "InvalidExtensionShare",
+      "msg": "An extension share is at most 10,000 bps of the protocol part"
     }
   ],
   "types": [
-    {
-      "name": "Call",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "market",
-            "type": "pubkey"
-          },
-          {
-            "name": "caller",
-            "type": "pubkey"
-          },
-          {
-            "name": "id",
-            "type": "u64"
-          },
-          {
-            "name": "opened_at",
-            "type": "i64"
-          },
-          {
-            "name": "window_start",
-            "type": "i64"
-          },
-          {
-            "name": "horizon",
-            "type": "i64"
-          },
-          {
-            "name": "price_integral",
-            "type": "u128"
-          },
-          {
-            "name": "price_integral_hi",
-            "docs": [
-              "High half of the 256-bit integral. Low-half compatibility does not limit",
-              "how long an otherwise valid high-price market can remain observable."
-            ],
-            "type": "u128"
-          },
-          {
-            "name": "checkpointed",
-            "type": "bool"
-          },
-          {
-            "name": "evidence_missing",
-            "docs": [
-              "A missing historical edge permanently selects the follower refund path."
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "position_count",
-            "type": "u64"
-          },
-          {
-            "name": "follower_count",
-            "type": "u64"
-          },
-          {
-            "name": "settled_positions",
-            "type": "u64"
-          },
-          {
-            "name": "earned",
-            "type": "u64"
-          },
-          {
-            "name": "refunded",
-            "type": "u64"
-          },
-          {
-            "name": "claimable_payout",
-            "type": "u64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CallCheckpointed",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "call",
-            "type": "pubkey"
-          },
-          {
-            "name": "window_start",
-            "type": "i64"
-          },
-          {
-            "name": "horizon",
-            "type": "i64"
-          },
-          {
-            "name": "price_integral",
-            "type": "u128"
-          },
-          {
-            "name": "price_integral_hi",
-            "type": "u128"
-          },
-          {
-            "name": "evidence_missing",
-            "type": "bool"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CallClosed",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "call",
-            "type": "pubkey"
-          },
-          {
-            "name": "caller",
-            "type": "pubkey"
-          },
-          {
-            "name": "position_count",
-            "type": "u64"
-          },
-          {
-            "name": "earned",
-            "type": "u64"
-          },
-          {
-            "name": "refunded",
-            "type": "u64"
-          },
-          {
-            "name": "payout",
-            "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CallOpened",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "call",
-            "type": "pubkey"
-          },
-          {
-            "name": "market",
-            "type": "pubkey"
-          },
-          {
-            "name": "caller",
-            "type": "pubkey"
-          },
-          {
-            "name": "window_start",
-            "type": "i64"
-          },
-          {
-            "name": "horizon",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CallPayoutClaimed",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "call",
-            "type": "pubkey"
-          },
-          {
-            "name": "caller",
-            "type": "pubkey"
-          },
-          {
-            "name": "payout",
-            "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CallPosition",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "call",
-            "type": "pubkey"
-          },
-          {
-            "name": "market",
-            "type": "pubkey"
-          },
-          {
-            "name": "follower",
-            "type": "pubkey"
-          },
-          {
-            "name": "caller",
-            "type": "pubkey"
-          },
-          {
-            "name": "horizon",
-            "type": "i64"
-          },
-          {
-            "name": "rent_payer",
-            "type": "pubkey"
-          },
-          {
-            "name": "cost",
-            "type": "u64"
-          },
-          {
-            "name": "tokens",
-            "type": "u64"
-          },
-          {
-            "name": "escrow",
-            "type": "u64"
-          },
-          {
-            "name": "has_activity",
-            "type": "bool"
-          },
-          {
-            "name": "settled",
-            "type": "bool"
-          },
-          {
-            "name": "profitable",
-            "type": "bool"
-          },
-          {
-            "name": "exit_value",
-            "type": "u64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CallSettled",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "call",
-            "type": "pubkey"
-          },
-          {
-            "name": "follower",
-            "type": "pubkey"
-          },
-          {
-            "name": "caller",
-            "type": "pubkey"
-          },
-          {
-            "name": "profitable",
-            "type": "bool"
-          },
-          {
-            "name": "cost",
-            "type": "u64"
-          },
-          {
-            "name": "tokens",
-            "type": "u64"
-          },
-          {
-            "name": "exit_value",
-            "type": "u64"
-          },
-          {
-            "name": "payout",
-            "type": "u64"
-          },
-          {
-            "name": "price_integral",
-            "type": "u128"
-          },
-          {
-            "name": "price_integral_hi",
-            "type": "u128"
-          },
-          {
-            "name": "payout_deferred",
-            "type": "bool"
-          },
-          {
-            "name": "evidence_missing",
-            "type": "bool"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CallerSequence",
-      "docs": [
-        "A small durable replay marker scoped to one caller and market. It cannot",
-        "close, so closing a Call never allows the same address to be initialized",
-        "again. Other callers never change this sequence."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "market",
-            "type": "pubkey"
-          },
-          {
-            "name": "caller",
-            "type": "pubkey"
-          },
-          {
-            "name": "next_id",
-            "type": "u64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
     {
       "name": "CoinCreated",
       "type": {
@@ -2289,6 +1595,49 @@
                 "name": "Terms"
               }
             }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Extension",
+      "docs": [
+        "A registered extension: a separate program that routes trades into the core by CPI",
+        "and receives `share_bps` of the protocol's part of each routed trade's fee.",
+        "The core never calls out; pausing or removing an entry stops new routed trades only."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "program",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "`[\"fix-extension\"]` under `program`; only that program can sign as it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "docs": [
+              "The account credited with the extension's share."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "share_bps",
+            "type": "u16"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
           },
           {
             "name": "bump",
@@ -2403,26 +1752,6 @@
             "type": "u64"
           },
           {
-            "name": "oracle_count",
-            "type": "u64"
-          },
-          {
-            "name": "oracle_timestamp",
-            "type": "i64"
-          },
-          {
-            "name": "oracle_exit_price",
-            "type": "u128"
-          },
-          {
-            "name": "oracle_cumulative_lo",
-            "type": "u128"
-          },
-          {
-            "name": "oracle_cumulative_hi",
-            "type": "u128"
-          },
-          {
             "name": "bump",
             "type": "u8"
           },
@@ -2441,150 +1770,6 @@
       }
     },
     {
-      "name": "MinuteObservation",
-      "docs": [
-        "Explicit u64 limbs give identical eight-byte alignment on host and SBF."
-      ],
-      "serialization": "bytemuck",
-      "repr": {
-        "kind": "c"
-      },
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "minute",
-            "type": "i64"
-          },
-          {
-            "name": "cumulative_lo",
-            "type": {
-              "array": [
-                "u64",
-                2
-              ]
-            }
-          },
-          {
-            "name": "cumulative_hi",
-            "type": {
-              "array": [
-                "u64",
-                2
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "PositionClosed",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "call",
-            "type": "pubkey"
-          },
-          {
-            "name": "follower",
-            "type": "pubkey"
-          },
-          {
-            "name": "rent_payer",
-            "type": "pubkey"
-          }
-        ]
-      }
-    },
-    {
-      "name": "PriceHistory",
-      "docs": [
-        "Created once with the market. Trades borrow this data in place and never",
-        "allocate, resize, or depend on a keeper. Every retained record is the exact",
-        "cumulative price at a UTC minute boundary, including crossed quiet minutes."
-      ],
-      "serialization": "bytemuck",
-      "repr": {
-        "kind": "c"
-      },
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "market",
-            "type": "pubkey"
-          },
-          {
-            "name": "latest_minute",
-            "type": "i64"
-          },
-          {
-            "name": "count",
-            "type": "u64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          },
-          {
-            "name": "padding",
-            "type": {
-              "array": [
-                "u8",
-                7
-              ]
-            }
-          },
-          {
-            "name": "observations",
-            "type": {
-              "array": [
-                {
-                  "defined": {
-                    "name": "MinuteObservation"
-                  }
-                },
-                241
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "PriceRecorded",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "market",
-            "type": "pubkey"
-          },
-          {
-            "name": "index",
-            "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          },
-          {
-            "name": "cumulative_lo",
-            "type": "u128"
-          },
-          {
-            "name": "cumulative_hi",
-            "type": "u128"
-          },
-          {
-            "name": "exit_price",
-            "type": "u128"
-          }
-        ]
-      }
-    },
-    {
       "name": "Protocol",
       "type": {
         "kind": "struct",
@@ -2592,6 +1777,10 @@
           {
             "name": "accrued",
             "type": "u64"
+          },
+          {
+            "name": "shard",
+            "type": "u8"
           },
           {
             "name": "bump",
@@ -2646,10 +1835,6 @@
             "type": "u64"
           },
           {
-            "name": "call_fee",
-            "type": "u64"
-          },
-          {
             "name": "pool_fee",
             "type": "u64"
           },
@@ -2678,8 +1863,18 @@
             "type": "i64"
           },
           {
-            "name": "call",
+            "name": "extension",
+            "docs": [
+              "The extension that routed this trade, or the default key for none."
+            ],
             "type": "pubkey"
+          },
+          {
+            "name": "extension_fee",
+            "docs": [
+              "The extension's line, paid out of the protocol's part: protocol_fee + extension_fee is the protocol share."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -2728,25 +1923,6 @@
           {
             "name": "pool_share_bps",
             "type": "u16"
-          },
-          {
-            "name": "call_share_bps",
-            "docs": [
-              "Fraction of the protocol share; never added to the trader's fee."
-            ],
-            "type": "u16"
-          },
-          {
-            "name": "min_horizon",
-            "type": "i64"
-          },
-          {
-            "name": "max_horizon",
-            "type": "i64"
-          },
-          {
-            "name": "scoring_window",
-            "type": "i64"
           }
         ]
       }

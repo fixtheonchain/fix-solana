@@ -17,14 +17,15 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-debug = []
 custom-heap = []
 custom-panic = []
+# Test-only CU probes; normal program and IDL builds do not enable this.
+measure-mint-suffix = []
 
 [dependencies]
-anchor-lang = { version = "=0.31.1", features = ["init-if-needed"] }
+anchor-lang = { version = "=0.31.1", features = ["event-cpi"] }
 anchor-spl = { version = "=0.31.1", default-features = false, features = ["token", "token_2022"] }
 spl-token-2022 = { version = "=6.0.0", features = ["no-entrypoint"] }
 spl-token-metadata-interface = "=0.6.0"
 uint = "=0.10.2"
-bytemuck = { version = "=1.25.2", features = ["derive", "min_const_generics"] }
 
 [dev-dependencies]
 litesvm = "=0.6.1"

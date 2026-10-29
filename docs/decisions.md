@@ -1,42 +1,79 @@
 # Protocol decisions
 
-Each coin starts on its curve and accepts buys from the slot after its creation. Economic values come from the
-initialized on-chain terms.
+The program holds coin creation, curve and pool trading, fixed fees, creator claims, admin configuration and the
+extension point. Features beyond these ship as extensions; calls arrive as the first one, with no core change. The
+core holds no call instructions, accounts, terms, tags or price records, and reserves none in its account layout.
 
 ## Creation and money
 
-Amounts are integer token atoms and lamports. One total fee is charged; protocol and pool shares round down, creator receives the remainder, and the tagged call slice comes out of protocol. Following never increases the trading fee.
+Amounts are integer token atoms and lamports. One fee is charged. Protocol and pool shares round down, and the
+creator receives the remainder. Supply, curve reserves and fees are copied from config at creation and never change
+for that coin.
 
-Creation makes the Token-2022 mint with on-mint metadata and sends the full fixed supply to the market. There is no creator allocation, remaining mint authority or freeze authority. It records immutable `created_slot`. Every buy requires `Clock.slot > created_slot`, otherwise returning `BuyNotOpen`. The shared handler applies this before charging or changing reserves, including exact-in/out and tagged buys. This prevents creation-transaction buys, bundles and separate same-slot buys, for the creator and every other wallet. Buying opens at `created_slot + 1` with no configurable delay, keeper or added sell restriction. Creation costs rent only; a later purchase pays the ordinary immutable curve fee.
+Creation accepts only mint public keys whose base58 address ends in lowercase `fix`. It makes a Token-2022 mint with
+on-mint metadata and sends the full fixed supply to its market vault, leaving no creator allocation, mint authority or
+freeze authority. The only creation cost is rent for the mint, market and vault. Market and Config allocations are 214
+and 125 bytes; a protocol shard is 17 bytes.
 
-A capped curve buy leaves unused input budget with the buyer, and its quote reports that amount separately from the accepted all-in debit.
+Market records an immutable `created_slot`. Every exact-in and exact-out buy requires `Clock.slot > created_slot`,
+otherwise `BuyNotOpen`; no funds move before this guard. This refuses same-transaction, bundled and separate
+creation-slot buys for every wallet. Buying opens at `created_slot + 1` without a configurable delay. Sells keep the
+ordinary reserve checks.
+
+A capped curve buy leaves the unused input budget with the buyer, and the quote reports it separately from the
+accepted all-in debit. Receipt price impact saturates as a signed i64 display metric, so extreme ratios cannot revert
+a valid money operation.
 
 ## Graduation and authority
 
-The last curve buy graduates in the same instruction, with no new accounts, migration fee, LP token or withdrawal path. Rational effective pool reserves preserve the exact final curve price. Physical backing rounds up by less than one atom and excess whole atoms burn.
+The last curve buy graduates in the same instruction with no extra accounts or rent, migration fee, LP token or
+withdrawal path. Rational effective pool reserves preserve the final curve price. Physical backing rounds up by less
+than one atom, and excess whole atoms burn. Liquidity stays locked in the program.
 
-Config updates and pause affect future creation only. Creation checks the preview revision. Initialization checks program upgrade authority; admin transfer cannot reassign creators or unlock funds. SOL protocol fees accrue to the PDA seeded `protocol`, without a withdrawal instruction.
+Config updates and pause affect future creation only. Creation checks the revision the creator previewed
+(`ConfigChanged`). Initialization checks the program upgrade authority; an admin transfer cannot reassign creators or
+unlock funds. Protocol SOL accrues above rent to the 64 PDAs seeded `["protocol", shard]`, credited in the instruction
+that charges the fee, with no withdrawal instruction. A trade writes its market and one shard, so markets share no
+write lock. Anyone may create a shard.
 
-## Fixed market price record
+`scripts/mainnet-terms.json` holds the launch terms: curve and pool fees of 100 bps, protocol, creator and pool shares
+of 4000, 4000 and 2000 bps, a supply of 10^15 atoms at 6 decimals, virtual reserves of 30,000,000,000 lamports and
+10^15 atoms, and 750,000,000,000,000 atoms for sale on the curve.
 
-The market keeps fee-net marginal Q64 price and a U256 cumulative integral. Trades contain no Call accounts. Tagged buys authenticate cached caller/horizon data from their follower position; separate registration reads the call. Calls remain unbounded.
+## Extensions
 
-One creator-funded 9,704-byte zero-copy `PriceHistory` holds 241 exact minute-boundary integrals, covering four hours between retained edges under continuous trading. Its size fits the 10,240-byte inner-instruction allocation limit. Reserve changes materialize crossed boundaries using the previous price before installing the new price. A long quiet gap writes only the latest 241 boundaries. Within a minute, only the global accumulator changes. Trades never allocate, request prepared storage, or depend on a keeper.
+Extensions are separate programs that call the core's buy and sell instructions by CPI; the core never calls out to
+them. The admin registers, pauses and removes an extension without a core upgrade. One `["extension", program_id]` PDA
+holds the extension's program, its signing PDA (`["fix-extension"]` under that program), its share recipient and its
+share of the protocol part in bps of that part.
 
-Windows and horizons align to whole minutes. The requested horizon is rounded down to a boundary, then advanced one minute if needed to meet the minimum actual duration. Both actual bounds are checked. Windows must be positive multiples of 60 and no longer than 7,200 seconds, leaving another 7,200 seconds of guaranteed checkpoint margin inside the ring's 14,400-second span. Horizon bounds need at least 59 seconds of width so alignment is possible at any clock second.
+A routed trade passes exactly three remaining accounts: the entry, the signing PDA as signer and the recipient. Only
+the extension program can produce that signature, so the trade is proven to come from it. Any other number of
+remaining accounts, an unregistered or paused entry, an unsigned or different authority and a different recipient are
+refused by name (6012–6017).
 
-Anyone checkpoints a completed window from the fixed history, or settlement checkpoints implicitly. Historical boundaries are exact ring values; a quiet tail extrapolates exactly from the last reserve change. A successful checkpoint freezes the integral forever. If an edge has been overwritten first, checkpointing freezes `evidence_missing` and settlement refunds the follower. This outcome is recorded separately from a scored loss. A current-price estimate is never used for missing history. Keepers are a convenience; a caller benefits from preserving the evidence near its horizon.
-
-Scoring uses time-weighted marginal exit price net of the phase sell fee, multiplied by tagged tokens. The unsaturated integer mark must strictly exceed tagged cost; equality refunds the follower. Portfolio exit quotes also include whole-position impact. Later sells/transfers do not rewrite hypothetical tagged allocations. Values above u64 saturate for reporting only; the profit comparison retains their precision. Receipt impact is a saturated signed i64 metric, so extreme ratios cannot revert a money operation. A last-second pump cannot rewrite prior time.
-
-Each caller/market pair owns a persistent monotonic CallerSequence, preventing closed addresses and old share links from being reused without allowing other callers to race its IDs.
-
-## Rent
-
-There is no sponsor. Users pay follower-position rent. Settlement pays the slice and closes the follower position to its user. Empty unused positions have an owner close path. Callers close calls after the horizon and all registered positions finish. Token ATAs holding tokens remain usable token accounts rather than spent protocol positions.
-
-An unfunded caller cannot receive a tiny SOL credit below the System account rent floor. A profitable settlement holds such a payout on the existing call account instead of blocking the follower's rent return. A permissionless claim transfers the accrued payout once its destination can accept it; closing the completed call returns rent plus any held payout. The claimable payout is a liability separate from the call's refundable rent. No new account is allocated.
+The core pays the share out of the protocol part in the same instruction, rounded down, and the protocol shard keeps
+the rest. The trader's cost, quotes, creator and pool lines and the coin's terms are those of a plain trade. Receipts
+carry `extension` and `extension_fee`, and `protocol_fee + extension_fee` is the plain protocol line. Plain trades never
+read the registry, so pausing or removing an entry stops only new routed trades; removing one closes its entry and
+returns the rent to the admin.
 
 ## Events
 
-The program emits its receipts with `emit!` only, with no inner-instruction events. A decoder tracks runtime invoke depth and completion and reads only the `Program data:` lines emitted while fix is executing; Anchor instruction messages and other programs' logs are diagnostics.
+Events use Anchor `#[event_cpi]`: each is a self-CPI signed by `["__event_authority"]`, so it travels as instruction
+data that the runtime records in full instead of in the 10,000-byte log budget. A decoder reads only fix instructions
+that carry the event tag with the event authority as their account. A transaction whose logs end in `Log truncated`
+still carries every receipt.
+
+## Vanity mints
+
+The suffix guard folds the 32 public-key bytes big-endian modulo 58^3 = 195,112 and requires 130,265, the base58
+value 38·58^2 + 41·58 + 55 of lowercase `fix`. `InvalidMintSuffix` is 6010. The tests compare the derivation with real
+base58 encodings and run accepted and refused creation. A feature-gated build (`measure-mint-suffix`) measures only the
+guard and subtracts the overhead of an adjacent empty probe; normal builds include no profiling code. The guard
+measures 312 CU.
+
+## Rent
+
+Users pay rent for their own token accounts, which stay theirs to close. Creation pays rent for the mint, market and
+vault. An extension's registry entry is paid by the admin and returns to the admin on removal.

@@ -1223,7 +1223,6 @@ dependencies = [
  "anchor-spl",
  "base64 0.22.1",
  "bincode",
- "bytemuck",
  "litesvm",
  "openssl",
  "serde_json",
@@ -1231,6 +1230,13 @@ dependencies = [
  "spl-token-2022",
  "spl-token-metadata-interface",
  "uint",
+]
+
+[[package]]
+name = "fix-test-extension"
+version = "0.1.0"
+dependencies = [
+ "solana-program",
 ]
 
 [[package]]

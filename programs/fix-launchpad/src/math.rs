@@ -27,15 +27,14 @@ pub fn ceil_div(n: u128, d: u128) -> Result<u128> {
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, Debug, PartialEq, Eq, InitSpace)]
-pub struct Fees { pub total: u64, pub protocol: u64, pub creator: u64, pub call: u64, pub pool: u64 }
+pub struct Fees { pub total: u64, pub protocol: u64, pub creator: u64, pub pool: u64 }
 
-pub fn fees(gross: u64, rate: u16, terms: &Terms, tagged: bool) -> Result<Fees> {
+pub fn fees(gross: u64, rate: u16, terms: &Terms) -> Result<Fees> {
     let total = mul_div(gross, rate as u64, BPS)?;
     let protocol = mul_div(total, terms.protocol_share_bps as u64, BPS)?;
     let pool = mul_div(total, terms.pool_share_bps as u64, BPS)?;
     let creator = sub(sub(total, protocol)?, pool)?;
-    let call = if tagged { mul_div(protocol, terms.call_share_bps as u64, BPS)? } else { 0 };
-    Ok(Fees { total, protocol: protocol - call, creator, call, pool })
+    Ok(Fees { total, protocol, creator, pool })
 }
 
 /// Minimal gross whose fee-net value covers `net`. Binary search avoids a fee-rounding off-by-one.

@@ -1,0 +1,15 @@
+[package]
+name = "fix-test-extension"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "TEST ONLY: a minimal extension that routes core trades by CPI in LiteSVM. Never deployed."
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+solana-program = "=2.2.1"

@@ -1,0 +1,15 @@
+{
+  "label": "MAINNET LAUNCH TERMS - passed to initialize_config at launch",
+  "terms": {
+    "total_supply": "1000000000000000",
+    "decimals": 6,
+    "virtual_sol": "30000000000",
+    "virtual_token": "1000000000000000",
+    "curve_tokens": "750000000000000",
+    "curve_fee_bps": 100,
+    "pool_fee_bps": 100,
+    "protocol_share_bps": 4000,
+    "creator_share_bps": 4000,
+    "pool_share_bps": 2000
+  }
+}
