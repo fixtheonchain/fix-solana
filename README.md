@@ -135,6 +135,18 @@ cargo test -p fix-launchpad --test money -- --test-threads=1
 anchor idl build -o idl/fix_launchpad.json
 ```
 
+The deployed program is built reproducibly with [`solana-verify`](https://github.com/solana-foundation/solana-verifiable-build)
+in the Solana Foundation's build image, so anyone can rebuild this repository and compare the result with the program
+on chain:
+
+```bash
+solana-verify build --library-name fix_launchpad --base-image solanafoundation/solana-verifiable-build:3.1.14
+```
+
+```bash
+solana-verify get-executable-hash target/deploy/fix_launchpad.so
+```
+
 The tests load `target/deploy/fix_launchpad.so` and the test extension into LiteSVM and set the clock directly, so no
 validator runs. They cover:
 
@@ -153,7 +165,8 @@ validator runs. They cover:
 - compute units per action under the launch terms, and extreme curve trades with receipt impact saturating instead of
   reverting
 
-The program id in `declare_id!` and `Anchor.toml` is the local development id.
+The program id in `declare_id!` and `Anchor.toml` is the mainnet program id,
+`14pdiXAQsKiLDr29KxV4FNRLe14JjUVwQwTCz7BZSfix`.
 
 ## License
 
