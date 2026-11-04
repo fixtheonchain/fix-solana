@@ -114,3 +114,27 @@ SOL, one pool per mint.
   to its last; a second venue with other terms would break that.
 - **Events.** `PoolCreated` and `Receipt` through `#[event_cpi]`. A receipt's action is 0 create, 1 buy, 2 sell, 3 add,
   4 remove, and it carries the reserves, the shares outstanding and the price after the action.
+
+### Token pairs
+
+The same program pairs any two mints the pools accept, so a token trades against another token without going through
+SOL.
+
+- **One address per pair.** `["pair", mint_a, mint_b]` with `mint_a < mint_b` by bytes (`PairOrder` otherwise), so the
+  pair of X and Y is one account however a wallet names them. Clients sort the two mints and carry their amounts with
+  them. Each side has its own vault, `["vault", pair, mint]`, under that mint's token program.
+- **Both directions, one curve.** `a_to_b` picks the input side. Exact in pays `amount_in`, takes the fee off it and
+  pays `y * net / (x + net)`; exact out pays the smallest input whose net covers `ceil(x * out / (y - out))`, the
+  pool's exact-out rounding. The math is the pool's with A in the SOL reserve's place.
+- **The fee in the input token.** A pair has no SOL side, so the fee comes off whatever is paid in: `fee_bps` of the
+  input, the protocol's part rounded down, the remainder left in the input reserve for liquidity providers. The input
+  reserve gains `amount_in - protocol`. The protocol's part stays in the input side's vault and is booked in the pair
+  (`protocol_a`, `protocol_b`), apart from the reserves, so it moves no price and is never paid out to liquidity
+  providers. Each vault holds its reserve plus its booked part, exactly.
+- **Everything else is the pool's.** Creation with both amounts and the geometric mean as the creator's shares, the
+  seeding slot closed to swaps in both directions, terms copied at creation under `expected_config_revision`,
+  positions per owner with exact shares, rounding toward the pair, the last shares taking both reserves, the same
+  mint allow list and the launchpad refusal for either mint.
+- **Events.** `PairCreated` and `PairReceipt`. A pair receipt's action is 0 create, 1 A to B, 2 B to A, 3 add,
+  4 remove; it carries both sides' amounts (on a swap, what was paid in with the fee and what was paid out), the fee
+  lines in the input token, the reserves, the shares and the price after, B atoms per A atom scaled by 2^64.

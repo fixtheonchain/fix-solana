@@ -212,6 +212,218 @@
       ]
     },
     {
+      "name": "add_pair_liquidity",
+      "docs": [
+        "Exactly `shares` at the pair's ratio, each side's part rounded up, at most `max_a` and `max_b`. Into an empty",
+        "pair both maximums go in whole and set the price, minting their geometric mean, at least `shares`."
+      ],
+      "discriminator": [
+        38,
+        140,
+        176,
+        50,
+        48,
+        249,
+        158,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pair",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "mint_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "vault_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_token_a",
+          "writable": true
+        },
+        {
+          "name": "owner_token_b",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "token_program_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": "u64"
+        },
+        {
+          "name": "max_a",
+          "type": "u64"
+        },
+        {
+          "name": "max_b",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "buy_exact_in",
       "discriminator": [
         250,
@@ -509,6 +721,342 @@
         },
         {
           "name": "max_gross",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "create_pair",
+      "docs": [
+        "Opens the pair of two token mints, `mint_a` the smaller address, with its first liquidity, which sets its",
+        "price. The creator's shares are the geometric mean of the two amounts. Swaps open in the next slot."
+      ],
+      "discriminator": [
+        156,
+        190,
+        126,
+        151,
+        163,
+        62,
+        192,
+        220
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a"
+        },
+        {
+          "name": "mint_b"
+        },
+        {
+          "name": "pair",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_token_a",
+          "writable": true
+        },
+        {
+          "name": "creator_token_b",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "launchpad_market_a",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                100,
+                47,
+                116,
+                162,
+                164,
+                231,
+                104,
+                101,
+                208,
+                111,
+                47,
+                53,
+                93,
+                251,
+                67,
+                108,
+                202,
+                220,
+                250,
+                165,
+                39,
+                39,
+                162,
+                224,
+                169,
+                186,
+                208,
+                247,
+                131,
+                221,
+                209
+              ]
+            }
+          }
+        },
+        {
+          "name": "launchpad_market_b",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                100,
+                47,
+                116,
+                162,
+                164,
+                231,
+                104,
+                101,
+                208,
+                111,
+                47,
+                53,
+                93,
+                251,
+                67,
+                108,
+                202,
+                220,
+                250,
+                165,
+                39,
+                39,
+                162,
+                224,
+                169,
+                186,
+                208,
+                247,
+                131,
+                221,
+                209
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program_a"
+        },
+        {
+          "name": "token_program_b"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_a",
+          "type": "u64"
+        },
+        {
+          "name": "amount_b",
+          "type": "u64"
+        },
+        {
+          "name": "expected_config_revision",
           "type": "u64"
         }
       ]
@@ -1070,6 +1618,213 @@
       ]
     },
     {
+      "name": "remove_pair_liquidity",
+      "docs": [
+        "Burns `shares` for each side's part rounded down, at least `min_a` and `min_b`. The last shares take everything."
+      ],
+      "discriminator": [
+        215,
+        59,
+        236,
+        152,
+        246,
+        68,
+        110,
+        68
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pair",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "mint_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "vault_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_token_a",
+          "writable": true
+        },
+        {
+          "name": "owner_token_b",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "token_program_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": "u64"
+        },
+        {
+          "name": "min_a",
+          "type": "u64"
+        },
+        {
+          "name": "min_b",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "sell_exact_in",
       "discriminator": [
         149,
@@ -1372,6 +2127,360 @@
       ]
     },
     {
+      "name": "swap_pair_exact_in",
+      "docs": [
+        "Pays exactly `amount_in` of the input token (A when `a_to_b`); the fee comes off it in that token."
+      ],
+      "discriminator": [
+        156,
+        136,
+        47,
+        44,
+        253,
+        177,
+        241,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "signer": true
+        },
+        {
+          "name": "pair",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "mint_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "vault_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "trader_token_a",
+          "writable": true
+        },
+        {
+          "name": "trader_token_b",
+          "writable": true
+        },
+        {
+          "name": "token_program_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "token_program_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "a_to_b",
+          "type": "bool"
+        },
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "swap_pair_exact_out",
+      "docs": [
+        "Receives exactly `amount_out` of the output token; the input paid is the smallest that covers it after the fee."
+      ],
+      "discriminator": [
+        105,
+        190,
+        77,
+        12,
+        152,
+        194,
+        112,
+        95
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "signer": true
+        },
+        {
+          "name": "pair",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "mint_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "vault_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "trader_token_a",
+          "writable": true
+        },
+        {
+          "name": "trader_token_b",
+          "writable": true
+        },
+        {
+          "name": "token_program_a",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "token_program_b",
+          "relations": [
+            "pair"
+          ]
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "a_to_b",
+          "type": "bool"
+        },
+        {
+          "name": "amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "max_in",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "update_config",
       "docs": [
         "Admin only. The terms reach pools created from now on; `paused` stops new pools, nothing else."
@@ -1445,6 +2554,19 @@
       ]
     },
     {
+      "name": "Pair",
+      "discriminator": [
+        85,
+        72,
+        49,
+        176,
+        182,
+        228,
+        141,
+        82
+      ]
+    },
+    {
       "name": "Pool",
       "discriminator": [
         241,
@@ -1485,6 +2607,32 @@
     }
   ],
   "events": [
+    {
+      "name": "PairCreated",
+      "discriminator": [
+        173,
+        73,
+        77,
+        43,
+        235,
+        157,
+        56,
+        30
+      ]
+    },
+    {
+      "name": "PairReceipt",
+      "discriminator": [
+        122,
+        238,
+        162,
+        93,
+        81,
+        235,
+        210,
+        28
+      ]
+    },
     {
       "name": "PoolCreated",
       "discriminator": [
@@ -1577,6 +2725,11 @@
       "code": 6012,
       "name": "InsufficientShares",
       "msg": "The position holds fewer shares"
+    },
+    {
+      "code": 6013,
+      "name": "PairOrder",
+      "msg": "A pair names two different mints, the smaller address first"
     }
   ],
   "types": [
@@ -1618,6 +2771,226 @@
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pair",
+      "docs": [
+        "A pair of two token mints, `mint_a` the smaller address. Each reserve sits in its own vault beside the",
+        "protocol's part of the fees taken in that token, which is booked here and which no instruction withdraws."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "terms",
+            "docs": [
+              "Copied from the config at creation; nothing changes them afterwards."
+            ],
+            "type": {
+              "defined": {
+                "name": "Terms"
+              }
+            }
+          },
+          {
+            "name": "reserve_a",
+            "type": "u64"
+          },
+          {
+            "name": "reserve_b",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_a",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_b",
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "created_slot",
+            "type": "u64"
+          },
+          {
+            "name": "seeded_slot",
+            "docs": [
+              "The slot liquidity last went into the empty pair. Swaps open in the slot after it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "receipt_sequence",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_a_bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_b_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PairCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pair",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program_a",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program_b",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "terms",
+            "type": {
+              "defined": {
+                "name": "Terms"
+              }
+            }
+          },
+          {
+            "name": "decimals_a",
+            "type": "u8"
+          },
+          {
+            "name": "decimals_b",
+            "type": "u8"
+          },
+          {
+            "name": "created_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PairReceipt",
+      "docs": [
+        "Every pair action's itemized receipt. A swap moves `amount_a` and `amount_b`, the input side being what the",
+        "trader paid, fee included, and takes its fee in the input token: `protocol_fee` booked to the protocol,",
+        "`lp_fee` left in the reserves. Create, add and remove move both amounts for `shares`. Reserves, shares and the",
+        "price (B per A, scaled by 2^64) are those after the action."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pair",
+            "type": "pubkey"
+          },
+          {
+            "name": "actor",
+            "type": "pubkey"
+          },
+          {
+            "name": "action",
+            "type": "u8"
+          },
+          {
+            "name": "sequence",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "amount_a",
+            "type": "u64"
+          },
+          {
+            "name": "amount_b",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "lp_fee",
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "total_shares",
+            "type": "u64"
+          },
+          {
+            "name": "reserve_a",
+            "type": "u64"
+          },
+          {
+            "name": "reserve_b",
+            "type": "u64"
+          },
+          {
+            "name": "price_before",
+            "type": "u128"
+          },
+          {
+            "name": "price_after",
+            "type": "u128"
+          },
+          {
+            "name": "price_impact_bps",
+            "type": "i64"
           }
         ]
       }

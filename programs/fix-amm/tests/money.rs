@@ -211,6 +211,7 @@ fn error_codes_are_stable() {
     assert_eq!(u32::from(fix_amm::AmmError::InvalidTerms), 6000);
     assert_eq!(u32::from(fix_amm::AmmError::SwapNotOpen), 6008);
     assert_eq!(u32::from(fix_amm::AmmError::InsufficientShares), 6012);
+    assert_eq!(u32::from(fix_amm::AmmError::PairOrder), 6013);
 }
 
 #[test]
@@ -540,4 +541,197 @@ fn transactions_are_exported_for_sdk_and_indexer_regressions() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/amm-event-log-vectors.json");
     std::fs::write(file, serde_json::to_string_pretty(&json!({"format":"fix-amm-litesvm-v1","programId":ID.to_string(),"mint":a.mint.to_string(),"tokenProgram":a.program.to_string(),
         "pool":a.pool().to_string(),"creator":creator.pubkey().to_string(),"trader":trader.pubkey().to_string(),"lp":lp.pubkey().to_string(),"transactions":transactions,"accounts":accounts})).unwrap()).unwrap();
+}
+
+/* ---------- token pairs ---------- */
+
+use fix_amm::{Pair, PairCreated, PairReceipt};
+
+/// Two token mints in canonical order: `a` holds the smaller address.
+#[derive(Clone, Copy)]
+struct Duo { a: Asset, b: Asset }
+impl Duo {
+    fn new(x: Asset, y: Asset) -> Self { if x.mint < y.mint { Self { a: x, b: y } } else { Self { a: y, b: x } } }
+    fn pair(&self) -> Pubkey { pda(&[b"pair", self.a.mint.as_ref(), self.b.mint.as_ref()]) }
+    fn vault_a(&self) -> Pubkey { pda(&[b"vault", self.pair().as_ref(), self.a.mint.as_ref()]) }
+    fn vault_b(&self) -> Pubkey { pda(&[b"vault", self.pair().as_ref(), self.b.mint.as_ref()]) }
+    fn position(&self, owner: &Pubkey) -> Pubkey { pda(&[b"position", self.pair().as_ref(), owner.as_ref()]) }
+}
+fn pair_receipts(meta: &TransactionMetadata) -> Vec<PairReceipt> {
+    events(meta).iter().filter(|b| b.starts_with(PairReceipt::DISCRIMINATOR)).map(|b| PairReceipt::deserialize(&mut &b[8..]).unwrap()).collect()
+}
+fn pair_receipt(meta: &TransactionMetadata) -> PairReceipt { let mut all = pair_receipts(meta); assert_eq!(all.len(), 1, "{:?}", meta.logs); all.remove(0) }
+fn pair_receipt_json(r: &PairReceipt) -> Value {
+    json!({"action":r.action,"amountA":r.amount_a.to_string(),"amountB":r.amount_b.to_string(),"protocol":r.protocol_fee.to_string(),"lp":r.lp_fee.to_string(),
+        "shares":r.shares.to_string(),"totalShares":r.total_shares.to_string(),"reserveA":r.reserve_a.to_string(),"reserveB":r.reserve_b.to_string(),
+        "priceBefore":r.price_before.to_string(),"priceAfter":r.price_after.to_string(),"priceImpactBps":r.price_impact_bps.to_string()})
+}
+/// The pair swap model, apart from the program's math: `x` is the input reserve and `y` the output reserve.
+fn pair_model(exact_in: bool, amount: u64, x: u64, y: u64) -> (u64, u64, u64, u64) {
+    let (x1, y1) = (x as u128, y as u128);
+    if exact_in {
+        let (t, p, l) = fee(amount); let out = (y1 * (amount - t) as u128 / (x1 + (amount - t) as u128)) as u64; (amount, out, p, l)
+    } else {
+        let net = (x1 * amount as u128).div_ceil(y1 - amount as u128) as u64; let g = gross_for(net); let (_, p, l) = fee(g); (g, amount, p, l)
+    }
+}
+impl Harness {
+    fn create_pair_ix(&self, d: Duo, creator: Pubkey, ta: Pubkey, tb: Pubkey, amount_a: u64, amount_b: u64) -> Instruction {
+        let market = |m: &Pubkey| Pubkey::find_program_address(&[b"market", m.as_ref()], &LAUNCHPAD_ID).0;
+        ix(instruction::CreatePair { amount_a, amount_b, expected_config_revision: 0 }, accounts::CreatePair {
+            creator, config: self.config, mint_a: d.a.mint, mint_b: d.b.mint, pair: d.pair(), vault_a: d.vault_a(), vault_b: d.vault_b(), creator_token_a: ta, creator_token_b: tb,
+            position: d.position(&creator), launchpad_market_a: market(&d.a.mint), launchpad_market_b: market(&d.b.mint), token_program_a: d.a.program, token_program_b: d.b.program,
+            system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID })
+    }
+    fn pair_swap_ix(&self, d: Duo, a_to_b: bool, exact_in: bool, amount: u64, bound: u64, trader: Pubkey, ta: Pubkey, tb: Pubkey) -> Instruction {
+        let accs = accounts::PairSwap { trader, pair: d.pair(), mint_a: d.a.mint, mint_b: d.b.mint, vault_a: d.vault_a(), vault_b: d.vault_b(), trader_token_a: ta, trader_token_b: tb,
+            token_program_a: d.a.program, token_program_b: d.b.program, event_authority: event_authority(), program: ID };
+        if exact_in { ix(instruction::SwapPairExactIn { a_to_b, amount_in: amount, min_out: bound }, accs) } else { ix(instruction::SwapPairExactOut { a_to_b, amount_out: amount, max_in: bound }, accs) }
+    }
+    fn pair_add_ix(&self, d: Duo, owner: Pubkey, ta: Pubkey, tb: Pubkey, shares: u64, max_a: u64, max_b: u64) -> Instruction {
+        ix(instruction::AddPairLiquidity { shares, max_a, max_b }, accounts::AddPairLiquidity { owner, pair: d.pair(), mint_a: d.a.mint, mint_b: d.b.mint, vault_a: d.vault_a(), vault_b: d.vault_b(),
+            owner_token_a: ta, owner_token_b: tb, position: d.position(&owner), token_program_a: d.a.program, token_program_b: d.b.program, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID })
+    }
+    fn pair_remove_ix(&self, d: Duo, owner: Pubkey, ta: Pubkey, tb: Pubkey, shares: u64, min_a: u64, min_b: u64) -> Instruction {
+        ix(instruction::RemovePairLiquidity { shares, min_a, min_b }, accounts::RemovePairLiquidity { owner, pair: d.pair(), mint_a: d.a.mint, mint_b: d.b.mint, vault_a: d.vault_a(), vault_b: d.vault_b(),
+            owner_token_a: ta, owner_token_b: tb, position: d.position(&owner), token_program_a: d.a.program, token_program_b: d.b.program, event_authority: event_authority(), program: ID })
+    }
+    fn pair(&self, d: Duo) -> Pair { self.decode(d.pair()) }
+    /// Each vault holds its reserve and the protocol's booked part; shares are the positions' sum.
+    fn assert_pair_books(&self, d: Duo, owners: &[Pubkey]) {
+        let p = self.pair(d);
+        assert_eq!(self.tokens(d.vault_a()), p.reserve_a + p.protocol_a, "vault A"); assert_eq!(self.tokens(d.vault_b()), p.reserve_b + p.protocol_b, "vault B");
+        let held: u64 = owners.iter().filter_map(|o| self.svm.get_account(&d.position(o)).map(|_| self.decode::<Position>(d.position(o)).shares)).sum();
+        assert_eq!(held, p.shares, "shares");
+    }
+    /// A wallet holding both tokens.
+    fn duo_wallet(&mut self, d: Duo, a: u64, b: u64) -> (Keypair, Pubkey, Pubkey) {
+        let w = self.wallet(10 * SOL); let ta = self.holder(d.a, w.pubkey(), a); let tb = self.holder(d.b, w.pubkey(), b); (w, ta, tb)
+    }
+}
+
+#[test]
+fn pairs_open_trade_both_ways_and_book_the_protocol_part_in_the_input_token() {
+    let mut vectors = vec![];
+    let mut h = Harness::new();
+    let x = h.mint(Kind::Spl); let y = h.mint(Kind::Token2022Metadata); let d = Duo::new(x, y);
+    let (creator, ca, cb) = h.duo_wallet(d, 9_000_000 * TOKEN, 9_000_000 * TOKEN);
+    let (trader, ta, tb) = h.duo_wallet(d, 3_000_000 * TOKEN, 3_000_000 * TOKEN);
+    let (amount_a, amount_b) = (2_000_000 * TOKEN, 5_000_000 * TOKEN);
+    // Creation and a swap in one transaction fail together.
+    let create = h.create_pair_ix(d, creator.pubkey(), ca, cb, amount_a, amount_b); let swap = h.pair_swap_ix(d, true, true, 1_000 * TOKEN, 1, creator.pubkey(), ca, cb);
+    assert!(h.send(vec![create, swap], &[&creator]).unwrap_err().contains("SwapNotOpen")); assert!(h.svm.get_account(&d.pair()).is_none());
+    let created = h.send(vec![h.create_pair_ix(d, creator.pubkey(), ca, cb, amount_a, amount_b)], &[&creator]).unwrap();
+    let ev = events(&created).into_iter().find(|b| b.starts_with(PairCreated::DISCRIMINATOR)).map(|b| PairCreated::deserialize(&mut &b[8..]).unwrap()).unwrap();
+    assert_eq!((ev.mint_a, ev.mint_b, ev.token_program_a, ev.token_program_b, ev.created_slot), (d.a.mint, d.b.mint, d.a.program, d.b.program, h.slot()));
+    let r = pair_receipt(&created); let shares = isqrt(amount_a as u128 * amount_b as u128);
+    assert_eq!((r.action, r.amount_a, r.amount_b, r.shares, r.total_shares, r.price_before), (0, amount_a, amount_b, shares, shares, 0));
+    assert_eq!(r.price_after, ((amount_b as u128) << 64) / amount_a as u128);
+    h.assert_pair_books(d, &[creator.pubkey()]);
+    // The seeding slot takes no swap in either direction, from anyone.
+    for (a_to_b, exact_in) in [(true, true), (true, false), (false, true), (false, false)] {
+        let swap = h.pair_swap_ix(d, a_to_b, exact_in, 1_000 * TOKEN, if exact_in { 1 } else { u64::MAX }, trader.pubkey(), ta, tb);
+        assert!(h.send_same_slot(vec![swap], &[&trader]).unwrap_err().contains("SwapNotOpen"));
+    }
+    // Both directions, exact in and exact out, equal the model; the trader's balances equal the receipt.
+    let plan: [(bool, bool, u64); 8] = [(true, true, 40_000 * TOKEN + 7), (false, true, 90_001 * TOKEN), (true, false, 33_333 * TOKEN), (false, false, 12_345 * TOKEN + 9),
+        (true, true, 3), (false, false, 1), (true, true, 600_000 * TOKEN), (false, true, 1_500_000 * TOKEN)];
+    for (a_to_b, exact_in, amount) in plan {
+        let before = h.pair(d);
+        let (x, y) = if a_to_b { (before.reserve_a, before.reserve_b) } else { (before.reserve_b, before.reserve_a) };
+        let (gross, out, protocol, lp) = pair_model(exact_in, amount, x, y);
+        if out == 0 { assert!(h.send(vec![h.pair_swap_ix(d, a_to_b, exact_in, amount, 0, trader.pubkey(), ta, tb)], &[&trader]).unwrap_err().contains("SlippageExceeded")); continue; }
+        let bound = if exact_in { out } else { gross };
+        let tighter = h.pair_swap_ix(d, a_to_b, exact_in, amount, if exact_in { bound + 1 } else { bound - 1 }, trader.pubkey(), ta, tb);
+        let refused = h.send(vec![tighter], &[&trader]).unwrap_err(); assert!(refused.contains("SlippageExceeded") || (bound == 1 && refused.contains("ZeroAmount")), "{refused}");
+        let (a0, b0) = (h.tokens(ta), h.tokens(tb));
+        let r = pair_receipt(&h.send(vec![h.pair_swap_ix(d, a_to_b, exact_in, amount, bound, trader.pubkey(), ta, tb)], &[&trader]).unwrap());
+        let after = h.pair(d);
+        let (paid, got) = if a_to_b { (a0 - h.tokens(ta), h.tokens(tb) - b0) } else { (b0 - h.tokens(tb), h.tokens(ta) - a0) };
+        assert_eq!((paid, got, r.protocol_fee, r.lp_fee), (gross, out, protocol, lp), "{a_to_b} {exact_in} {amount}");
+        assert_eq!(r.action, if a_to_b { 1 } else { 2 });
+        assert_eq!((r.amount_a, r.amount_b), if a_to_b { (gross, out) } else { (out, gross) });
+        let (xa, ya) = if a_to_b { (after.reserve_a, after.reserve_b) } else { (after.reserve_b, after.reserve_a) };
+        assert_eq!((xa, ya), (x + gross - protocol, y - out));
+        assert_eq!(if a_to_b { after.protocol_a - before.protocol_a } else { after.protocol_b - before.protocol_b }, protocol, "protocol part booked in the input token");
+        assert!(after.reserve_a as u128 * after.reserve_b as u128 >= before.reserve_a as u128 * before.reserve_b as u128);
+        assert_eq!((r.reserve_a, r.reserve_b, r.price_after), (after.reserve_a, after.reserve_b, ((after.reserve_b as u128) << 64) / after.reserve_a as u128));
+        h.assert_pair_books(d, &[creator.pubkey()]);
+        vectors.push(json!({"aToB":a_to_b,"exactIn":exact_in,"amount":amount.to_string(),"before":{"reserveA":before.reserve_a.to_string(),"reserveB":before.reserve_b.to_string(),"shares":before.shares.to_string()},"receipt":pair_receipt_json(&r)}));
+    }
+    // Liquidity at the pair's ratio, rounded toward the pair; the protocol's booked part never leaves with it.
+    let (lp, la, lb) = h.duo_wallet(d, 5_000_000 * TOKEN, 9_000_000 * TOKEN);
+    let p = h.pair(d); let shares = p.shares / 4 + 3;
+    let need_a = (shares as u128 * p.reserve_a as u128).div_ceil(p.shares as u128) as u64; let need_b = (shares as u128 * p.reserve_b as u128).div_ceil(p.shares as u128) as u64;
+    assert!(h.send(vec![h.pair_add_ix(d, lp.pubkey(), la, lb, shares, need_a - 1, u64::MAX)], &[&lp]).unwrap_err().contains("SlippageExceeded"));
+    let r = pair_receipt(&h.send(vec![h.pair_add_ix(d, lp.pubkey(), la, lb, shares, need_a, need_b)], &[&lp]).unwrap());
+    assert_eq!((r.action, r.amount_a, r.amount_b, r.shares), (3, need_a, need_b, shares));
+    h.assert_pair_books(d, &[creator.pubkey(), lp.pubkey()]);
+    for (owner, ta, tb) in [(&lp, la, lb), (&creator, ca, cb)] {
+        let held = h.decode::<Position>(d.position(&owner.pubkey())).shares; let p = h.pair(d);
+        let (out_a, out_b) = ((held as u128 * p.reserve_a as u128 / p.shares as u128) as u64, (held as u128 * p.reserve_b as u128 / p.shares as u128) as u64);
+        let (a0, b0) = (h.tokens(ta), h.tokens(tb));
+        let r = pair_receipt(&h.send(vec![h.pair_remove_ix(d, owner.pubkey(), ta, tb, held, out_a, out_b)], &[owner]).unwrap());
+        assert_eq!((r.action, r.amount_a, r.amount_b, h.tokens(ta) - a0, h.tokens(tb) - b0), (4, out_a, out_b, out_a, out_b));
+    }
+    let p = h.pair(d);
+    assert_eq!((p.reserve_a, p.reserve_b, p.shares), (0, 0, 0), "the last shares take both reserves");
+    assert_eq!((h.tokens(d.vault_a()), h.tokens(d.vault_b())), (p.protocol_a, p.protocol_b), "only the protocol's booked part stays in the vaults");
+    assert!(p.protocol_a > 0 && p.protocol_b > 0);
+    assert!(h.send(vec![h.pair_swap_ix(d, true, true, 1_000, 1, trader.pubkey(), ta, tb)], &[&trader]).unwrap_err().contains("InsufficientLiquidity"));
+    // Seeding the empty pair again closes that slot to swaps.
+    let seed = isqrt(1_000 * TOKEN as u128 * 3_000 * TOKEN as u128);
+    let r = pair_receipt(&h.send(vec![h.pair_add_ix(d, lp.pubkey(), la, lb, seed, 1_000 * TOKEN, 3_000 * TOKEN)], &[&lp]).unwrap());
+    assert_eq!((r.shares, r.reserve_a, r.reserve_b, r.price_before), (seed, 1_000 * TOKEN, 3_000 * TOKEN, 0));
+    let swap = h.pair_swap_ix(d, false, true, 10 * TOKEN, 1, trader.pubkey(), ta, tb);
+    assert!(h.send_same_slot(vec![swap.clone()], &[&trader]).unwrap_err().contains("SwapNotOpen"));
+    h.send(vec![swap], &[&trader]).unwrap();
+    h.assert_pair_books(d, &[creator.pubkey(), lp.pubkey()]);
+    // Every executed pair transaction, for the SDK decoder and indexer regressions.
+    let transactions: Vec<Value> = h.recorded.iter().filter(|tx| tx["innerInstructions"].as_array().unwrap().iter().flat_map(|g| g["instructions"].as_array().unwrap().iter())
+        .any(|entry| STANDARD.decode(entry["dataBase64"].as_str().unwrap()).unwrap().strip_prefix(anchor_lang::event::EVENT_IX_TAG_LE).is_some_and(|bytes| bytes.starts_with(PairReceipt::DISCRIMINATOR)))).cloned().collect();
+    let accounts: Vec<Value> = [d.pair(), d.position(&creator.pubkey()), d.position(&lp.pubkey())].iter().filter_map(|k| h.svm.get_account(k).map(|acc| json!({"address":k.to_string(),"owner":acc.owner.to_string(),"dataBase64":STANDARD.encode(&acc.data)}))).collect();
+    std::fs::write(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/amm-pair-event-vectors.json"), serde_json::to_string_pretty(&json!({"format":"fix-amm-pair-litesvm-v1","programId":ID.to_string(),
+        "pair":d.pair().to_string(),"mintA":d.a.mint.to_string(),"mintB":d.b.mint.to_string(),"transactions":transactions,"accounts":accounts})).unwrap()).unwrap();
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/amm-pair-vectors.json");
+    std::fs::write(file, serde_json::to_string_pretty(&json!({"source":"LiteSVM executed fix_amm SBF pair receipts","terms":{"feeBps":TERMS.fee_bps,"protocolShareBps":TERMS.protocol_share_bps},"vectors":vectors})).unwrap()).unwrap();
+}
+
+#[test]
+fn pairs_refuse_by_name_and_measure_their_units() {
+    let mut h = Harness::new();
+    let x = h.mint(Kind::Spl); let y = h.mint(Kind::Token2022Metadata); let d = Duo::new(x, y);
+    let (creator, ca, cb) = h.duo_wallet(d, 5_000_000 * TOKEN, 5_000_000 * TOKEN);
+    // Mints out of order, or the same mint twice, are refused.
+    let reversed = Duo { a: d.b, b: d.a };
+    assert!(h.send(vec![h.create_pair_ix(reversed, creator.pubkey(), cb, ca, TOKEN, TOKEN)], &[&creator]).unwrap_err().contains("PairOrder"));
+    // The same mint twice fails on its second vault before the order rule; either way nothing is created.
+    let same = Duo { a: d.a, b: d.a };
+    assert!(h.send(vec![h.create_pair_ix(same, creator.pubkey(), ca, ca, TOKEN, TOKEN)], &[&creator]).is_err());
+    assert!(h.svm.get_account(&same.pair()).is_none());
+    // A launchpad coin or a transfer-fee mint on either side is refused.
+    let coin = h.mint(Kind::Token2022Metadata);
+    h.svm.set_account(Pubkey::find_program_address(&[b"market", coin.mint.as_ref()], &LAUNCHPAD_ID).0, Account { lamports: 2_000_000, data: vec![1; 222], owner: LAUNCHPAD_ID, executable: false, rent_epoch: 0 }).unwrap();
+    let fee_mint = h.mint(Kind::Token2022(ExtensionType::TransferFeeConfig));
+    for (other, error) in [(coin, "LaunchpadCoin"), (fee_mint, "UnsupportedMint")] {
+        let e = Duo::new(x, other); let (w, ta, tb) = h.duo_wallet(e, 1_000 * TOKEN, 1_000 * TOKEN);
+        assert!(h.send(vec![h.create_pair_ix(e, w.pubkey(), ta, tb, 1_000 * TOKEN, 1_000 * TOKEN)], &[&w]).unwrap_err().contains(error), "{error}");
+    }
+    // Units per pair action.
+    let cu = |m: &TransactionMetadata| m.compute_units_consumed;
+    let created = cu(&h.send(vec![h.create_pair_ix(d, creator.pubkey(), ca, cb, 2_000_000 * TOKEN, 3_000_000 * TOKEN)], &[&creator]).unwrap());
+    let (t, ta, tb) = h.duo_wallet(d, 500_000 * TOKEN, 500_000 * TOKEN);
+    let mut swap = 0;
+    for (a_to_b, exact_in, bound) in [(true, true, 1), (true, false, u64::MAX), (false, true, 1), (false, false, u64::MAX)] {
+        swap = swap.max(cu(&h.send(vec![h.pair_swap_ix(d, a_to_b, exact_in, 10_000 * TOKEN, bound, t.pubkey(), ta, tb)], &[&t]).unwrap()));
+    }
+    let add_new = cu(&h.send(vec![h.pair_add_ix(d, t.pubkey(), ta, tb, 1_000_000, u64::MAX, u64::MAX)], &[&t]).unwrap());
+    let add = cu(&h.send(vec![h.pair_add_ix(d, t.pubkey(), ta, tb, 1_000_000, u64::MAX, u64::MAX)], &[&t]).unwrap());
+    let remove = cu(&h.send(vec![h.pair_remove_ix(d, t.pubkey(), ta, tb, 1_500_000, 0, 0)], &[&t]).unwrap());
+    let report = json!({"source":"LiteSVM 0.6.1, compiled fix_amm SBF, one SPL Token and one Token-2022 mint","createPair":created,"pairSwap":swap,"addPairLiquidityNewPosition":add_new,"addPairLiquidity":add,"removePairLiquidity":remove});
+    std::fs::write(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/amm-pair-compute-units.json"), serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    println!("Pair compute units: {report}");
+    for (field, ceiling) in [("createPair", 130_000u64), ("pairSwap", 70_000), ("addPairLiquidityNewPosition", 70_000), ("addPairLiquidity", 60_000), ("removePairLiquidity", 60_000)] {
+        assert!(report[field].as_u64().unwrap() <= ceiling, "{field} exceeds {ceiling}: {report}");
+    }
 }

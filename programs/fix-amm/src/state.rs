@@ -110,3 +110,75 @@ pub struct Receipt {
     pub price_after: u128,
     pub price_impact_bps: i64,
 }
+
+/// A pair of two token mints, `mint_a` the smaller address. Each reserve sits in its own vault beside the
+/// protocol's part of the fees taken in that token, which is booked here and which no instruction withdraws.
+#[account]
+#[derive(InitSpace)]
+pub struct Pair {
+    pub mint_a: Pubkey,
+    pub mint_b: Pubkey,
+    pub token_program_a: Pubkey,
+    pub token_program_b: Pubkey,
+    pub creator: Pubkey,
+    /// Copied from the config at creation; nothing changes them afterwards.
+    pub terms: Terms,
+    pub reserve_a: u64,
+    pub reserve_b: u64,
+    pub protocol_a: u64,
+    pub protocol_b: u64,
+    pub shares: u64,
+    pub created_slot: u64,
+    /// The slot liquidity last went into the empty pair. Swaps open in the slot after it.
+    pub seeded_slot: u64,
+    pub receipt_sequence: u64,
+    pub bump: u8,
+    pub vault_a_bump: u8,
+    pub vault_b_bump: u8,
+}
+impl Pair {
+    /// B atoms per A atom, scaled by 2^64; zero for an empty pair.
+    pub fn price(&self) -> u128 { math::spot(self.reserve_b, self.reserve_a) }
+}
+
+/// Pair receipt actions beside CREATE, ADD and REMOVE: a swap names its direction.
+pub const SWAP_A_TO_B: u8 = 1;
+pub const SWAP_B_TO_A: u8 = 2;
+
+#[event]
+pub struct PairCreated {
+    pub pair: Pubkey,
+    pub mint_a: Pubkey,
+    pub mint_b: Pubkey,
+    pub token_program_a: Pubkey,
+    pub token_program_b: Pubkey,
+    pub creator: Pubkey,
+    pub terms: Terms,
+    pub decimals_a: u8,
+    pub decimals_b: u8,
+    pub created_slot: u64,
+}
+
+/// Every pair action's itemized receipt. A swap moves `amount_a` and `amount_b`, the input side being what the
+/// trader paid, fee included, and takes its fee in the input token: `protocol_fee` booked to the protocol,
+/// `lp_fee` left in the reserves. Create, add and remove move both amounts for `shares`. Reserves, shares and the
+/// price (B per A, scaled by 2^64) are those after the action.
+#[event]
+pub struct PairReceipt {
+    pub pair: Pubkey,
+    pub actor: Pubkey,
+    pub action: u8,
+    pub sequence: u64,
+    pub timestamp: i64,
+    pub amount_a: u64,
+    pub amount_b: u64,
+    pub protocol_fee: u64,
+    pub lp_fee: u64,
+    pub shares: u64,
+    pub total_shares: u64,
+    pub reserve_a: u64,
+    pub reserve_b: u64,
+    pub price_before: u128,
+    pub price_after: u128,
+    pub price_impact_bps: i64,
+}

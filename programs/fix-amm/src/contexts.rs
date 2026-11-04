@@ -81,3 +81,75 @@ pub struct Swap<'info> {
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
+
+// Token pairs. Accounts are boxed: two mints, two vaults and two token accounts would crowd the SBF stack frame.
+#[event_cpi]
+#[derive(Accounts)]
+pub struct CreatePair<'info> {
+    #[account(mut)] pub creator: Signer<'info>,
+    #[account(seeds=[b"config"], bump=config.bump)] pub config: Box<Account<'info, Config>>,
+    #[account(mint::token_program=token_program_a)] pub mint_a: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mint::token_program=token_program_b, constraint = mint_a.key() < mint_b.key() @ AmmError::PairOrder)] pub mint_b: Box<InterfaceAccount<'info, Mint>>,
+    #[account(init, payer=creator, space=8+Pair::INIT_SPACE, seeds=[b"pair", mint_a.key().as_ref(), mint_b.key().as_ref()], bump)] pub pair: Box<Account<'info, Pair>>,
+    #[account(init, payer=creator, seeds=[b"vault", pair.key().as_ref(), mint_a.key().as_ref()], bump, token::mint=mint_a, token::authority=pair, token::token_program=token_program_a)]
+    pub vault_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(init, payer=creator, seeds=[b"vault", pair.key().as_ref(), mint_b.key().as_ref()], bump, token::mint=mint_b, token::authority=pair, token::token_program=token_program_b)]
+    pub vault_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_a, token::authority=creator, token::token_program=token_program_a)] pub creator_token_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_b, token::authority=creator, token::token_program=token_program_b)] pub creator_token_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(init, payer=creator, space=8+Position::INIT_SPACE, seeds=[b"position", pair.key().as_ref(), creator.key().as_ref()], bump)]
+    pub position: Box<Account<'info, Position>>,
+    /// CHECK: The launchpad's market address for mint A. A coin the launchpad created has one there and is refused.
+    #[account(seeds=[b"market", mint_a.key().as_ref()], bump, seeds::program=LAUNCHPAD_ID)] pub launchpad_market_a: UncheckedAccount<'info>,
+    /// CHECK: The launchpad's market address for mint B.
+    #[account(seeds=[b"market", mint_b.key().as_ref()], bump, seeds::program=LAUNCHPAD_ID)] pub launchpad_market_b: UncheckedAccount<'info>,
+    pub token_program_a: Interface<'info, TokenInterface>,
+    pub token_program_b: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+#[event_cpi]
+#[derive(Accounts)]
+pub struct AddPairLiquidity<'info> {
+    #[account(mut)] pub owner: Signer<'info>,
+    #[account(mut, seeds=[b"pair", mint_a.key().as_ref(), mint_b.key().as_ref()], bump=pair.bump, has_one=mint_a, has_one=mint_b, has_one=token_program_a, has_one=token_program_b)] pub pair: Box<Account<'info, Pair>>,
+    pub mint_a: Box<InterfaceAccount<'info, Mint>>,
+    pub mint_b: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mut, seeds=[b"vault", pair.key().as_ref(), mint_a.key().as_ref()], bump=pair.vault_a_bump)] pub vault_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds=[b"vault", pair.key().as_ref(), mint_b.key().as_ref()], bump=pair.vault_b_bump)] pub vault_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_a, token::authority=owner, token::token_program=token_program_a)] pub owner_token_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_b, token::authority=owner, token::token_program=token_program_b)] pub owner_token_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(init_if_needed, payer=owner, space=8+Position::INIT_SPACE, seeds=[b"position", pair.key().as_ref(), owner.key().as_ref()], bump)]
+    pub position: Box<Account<'info, Position>>,
+    pub token_program_a: Interface<'info, TokenInterface>,
+    pub token_program_b: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+#[event_cpi]
+#[derive(Accounts)]
+pub struct RemovePairLiquidity<'info> {
+    #[account(mut)] pub owner: Signer<'info>,
+    #[account(mut, seeds=[b"pair", mint_a.key().as_ref(), mint_b.key().as_ref()], bump=pair.bump, has_one=mint_a, has_one=mint_b, has_one=token_program_a, has_one=token_program_b)] pub pair: Box<Account<'info, Pair>>,
+    pub mint_a: Box<InterfaceAccount<'info, Mint>>,
+    pub mint_b: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mut, seeds=[b"vault", pair.key().as_ref(), mint_a.key().as_ref()], bump=pair.vault_a_bump)] pub vault_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds=[b"vault", pair.key().as_ref(), mint_b.key().as_ref()], bump=pair.vault_b_bump)] pub vault_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_a, token::authority=owner, token::token_program=token_program_a)] pub owner_token_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_b, token::authority=owner, token::token_program=token_program_b)] pub owner_token_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds=[b"position", pair.key().as_ref(), owner.key().as_ref()], bump=position.bump)] pub position: Box<Account<'info, Position>>,
+    pub token_program_a: Interface<'info, TokenInterface>,
+    pub token_program_b: Interface<'info, TokenInterface>,
+}
+#[event_cpi]
+#[derive(Accounts)]
+pub struct PairSwap<'info> {
+    pub trader: Signer<'info>,
+    #[account(mut, seeds=[b"pair", mint_a.key().as_ref(), mint_b.key().as_ref()], bump=pair.bump, has_one=mint_a, has_one=mint_b, has_one=token_program_a, has_one=token_program_b)] pub pair: Box<Account<'info, Pair>>,
+    pub mint_a: Box<InterfaceAccount<'info, Mint>>,
+    pub mint_b: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mut, seeds=[b"vault", pair.key().as_ref(), mint_a.key().as_ref()], bump=pair.vault_a_bump)] pub vault_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, seeds=[b"vault", pair.key().as_ref(), mint_b.key().as_ref()], bump=pair.vault_b_bump)] pub vault_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_a, token::authority=trader, token::token_program=token_program_a)] pub trader_token_a: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint=mint_b, token::authority=trader, token::token_program=token_program_b)] pub trader_token_b: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub token_program_a: Interface<'info, TokenInterface>,
+    pub token_program_b: Interface<'info, TokenInterface>,
+}

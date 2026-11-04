@@ -172,7 +172,8 @@ The program id in `declare_id!` and `Anchor.toml` is the mainnet program id,
 ## fix-amm
 
 The second program in this workspace, `boi4jCS8KNarnN28BxRekzKd1hXt86rGUGpBhzkHfix`: pools for tokens that were not
-born on the launchpad, any SPL Token or Token-2022 mint against SOL, under the same rules.
+born on the launchpad, any SPL Token or Token-2022 mint against SOL, and pairs of any two such mints traded both ways,
+under the same rules.
 
 ```mermaid
 flowchart LR
@@ -199,12 +200,21 @@ flowchart LR
   coin created on the launchpad is refused (`LaunchpadCoin`): it trades in its own market for its whole life.
 - **Receipts.** `PoolCreated`, and one `Receipt` per create, swap, add and remove, with the fee lines, the reserves,
   the shares outstanding and the price after it. Quotes match execution exactly.
+- **Token pairs.** `["pair", mint_a, mint_b]` joins any two mints a pool accepts, `mint_a` the smaller address, so a
+  pair has one address whichever way its mints are named. Each side sits in `["vault", pair, mint]` under its own
+  token program, SPL Token and Token-2022 in any mix. Swaps run in both directions (`a_to_b`), exact in or exact out;
+  the fee comes off the input token, its protocol part booked in the pair (`protocol_a`, `protocol_b`) beside the
+  reserves and the liquidity providers' part left in the input reserve. The closed seeding slot, terms copied from the
+  config, positions at `["position", pair, owner]`, the mint rules and the launchpad refusal on either side work as
+  they do for pools. `PairCreated`, and one `PairReceipt` per action with both sides' amounts: 0 create, 1 A to B,
+  2 B to A, 3 add, 4 remove.
 
 | Group | Instructions |
 | --- | --- |
 | Config | `initialize_config(terms)`, `update_config(terms, paused)`, `propose_admin(new_admin)`, `accept_admin`, `create_protocol_shard(shard)` |
 | Pools | `create_pool(sol, tokens, expected_config_revision)`, `add_liquidity(shares, max_sol, max_tokens)`, `remove_liquidity(shares, min_sol, min_tokens)` |
 | Swaps | `buy_exact_in(gross, min_tokens)`, `buy_exact_out(tokens, max_gross)`, `sell_exact_in(tokens, min_sol)`, `sell_exact_out(sol, max_tokens)` |
+| Pairs | `create_pair(amount_a, amount_b, expected_config_revision)`, `add_pair_liquidity(shares, max_a, max_b)`, `remove_pair_liquidity(shares, min_a, min_b)`, `swap_pair_exact_in(a_to_b, amount_in, min_out)`, `swap_pair_exact_out(a_to_b, amount_out, max_in)` |
 
 The interface is in [`idl/fix_amm.json`](idl/fix_amm.json), the source in [`programs/fix-amm/`](programs/fix-amm/).
 
@@ -227,7 +237,10 @@ The AMM's money tests run the compiled program in LiteSVM against SPL Token and 
   to the receipt, and the constant product never falling;
 - adds, removes, the last shares emptying the pool, and seeding it again;
 - coarse shares costing a depositor at most one atom;
-- every refusal by name, and compute units per action.
+- a pair of an SPL Token and a Token-2022 mint: its seeding slot closed in both directions, swaps both ways in both
+  modes equal to the model, the protocol's part booked in each input token, the vaults always holding the reserves
+  plus that part, adds and removes, the pair emptied and seeded again;
+- every refusal by name, mints out of order included, and compute units per action.
 
 ## License
 
