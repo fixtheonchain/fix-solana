@@ -1,5 +1,5 @@
 {
-  "address": "14pdiXAQsKiLDr29KxV4FNRLe14JjUVwQwTCz7BZSfix",
+  "address": "6S1hsbe4XecosNkMDcb6xTreHn2BNmnqr8Sfr1rJfix",
   "metadata": {
     "name": "fix_launchpad",
     "version": "0.1.0",
@@ -656,7 +656,7 @@
         },
         {
           "name": "program",
-          "address": "14pdiXAQsKiLDr29KxV4FNRLe14JjUVwQwTCz7BZSfix"
+          "address": "6S1hsbe4XecosNkMDcb6xTreHn2BNmnqr8Sfr1rJfix"
         },
         {
           "name": "program_data"

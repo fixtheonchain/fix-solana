@@ -166,7 +166,7 @@ validator runs. They cover:
   reverting
 
 The program id in `declare_id!` and `Anchor.toml` is the mainnet program id,
-`14pdiXAQsKiLDr29KxV4FNRLe14JjUVwQwTCz7BZSfix`.
+`6S1hsbe4XecosNkMDcb6xTreHn2BNmnqr8Sfr1rJfix`.
 
 ## License
 

@@ -13,7 +13,7 @@ pub use state::*;
 pub use contexts::*;
 use math::{add, sub, Fees};
 
-declare_id!("14pdiXAQsKiLDr29KxV4FNRLe14JjUVwQwTCz7BZSfix");
+declare_id!("6S1hsbe4XecosNkMDcb6xTreHn2BNmnqr8Sfr1rJfix");
 
 #[program]
 pub mod fix_launchpad {
