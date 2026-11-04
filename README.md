@@ -8,7 +8,8 @@
 
 # fix-launchpad
 
-The Solana program behind fix. A coin is created with its whole supply in its market, trades on a constant-product
+The Solana programs behind fix: the launchpad, and the fix AMM ([below](#fix-amm)). The launchpad is described
+first. A coin is created with its whole supply in its market, trades on a constant-product
 curve from the slot after its creation, and graduates into the program's own pool in the same instruction that buys
 the last curve token. Every trade pays one fee that is fixed for the coin's whole life and itemized in a receipt.
 Features ship as extensions: separate programs that route trades into this one by CPI, registered without an upgrade
@@ -167,6 +168,66 @@ validator runs. They cover:
 
 The program id in `declare_id!` and `Anchor.toml` is the mainnet program id,
 `6S1hsbe4XecosNkMDcb6xTreHn2BNmnqr8Sfr1rJfix`.
+
+## fix-amm
+
+The second program in this workspace, `boi4jCS8KNarnN28BxRekzKd1hXt86rGUGpBhzkHfix`: pools for tokens that were not
+born on the launchpad, any SPL Token or Token-2022 mint against SOL, under the same rules.
+
+```mermaid
+flowchart LR
+    C["create_pool<br/>slot N: the first liquidity<br/>sets the price,<br/>no swaps in this slot"] --> P
+    P["Pool<br/>from slot N+1<br/>x · y = k on its own reserves"] --> S["buy / sell<br/>exact in or out,<br/>one fee on the SOL side"]
+    P --> L["add / remove<br/>exact shares at the pool's ratio,<br/>positions instead of LP tokens"]
+```
+
+- **One pool per mint.** `["pool", mint]` keeps SOL as lamports above its rent and tokens in `["vault", pool]` under
+  the mint's own token program. Reserves are tracked in the pool account, so a donation changes no price.
+- **The seeding slot is closed.** No buy or sell lands in the slot liquidity goes into an empty pool, the creator's
+  included (`SwapNotOpen`); swaps open in the next slot. An emptied pool seeded again closes that slot the same way.
+- **Terms live in the pool.** `create_pool` copies the config's terms into the pool and checks the revision the
+  creator saw. `update_config` reaches only pools created later; pausing stops new pools and nothing else.
+- **One fee, two lines.** `fee_bps` of each swap's SOL side: `protocol_share_bps` of it, rounded down, goes to the
+  `["protocol", shard]` PDA the swap names in the same instruction, with no withdrawal instruction, and the rest stays
+  in the reserves for liquidity providers. Launch terms: 1%, 40% protocol, 60% liquidity providers
+  ([`scripts/amm-terms.json`](scripts/amm-terms.json)).
+- **Positions.** Shares live in `["position", pool, owner]`, with no LP token. A first deposit mints the geometric mean
+  of its two amounts. A later add mints exactly the shares asked for and pays each reserve's part rounded up; a remove
+  pays each part rounded down, and the last shares take everything left. Every share stays withdrawable by its owner.
+- **Mints.** Wrapped SOL is refused. A Token-2022 mint may carry only extensions that leave a transfer's amount and the
+  vault untouched: metadata, group and member records and their pointers, interest-bearing and scaled UI amounts. A
+  coin created on the launchpad is refused (`LaunchpadCoin`): it trades in its own market for its whole life.
+- **Receipts.** `PoolCreated`, and one `Receipt` per create, swap, add and remove, with the fee lines, the reserves,
+  the shares outstanding and the price after it. Quotes match execution exactly.
+
+| Group | Instructions |
+| --- | --- |
+| Config | `initialize_config(terms)`, `update_config(terms, paused)`, `propose_admin(new_admin)`, `accept_admin`, `create_protocol_shard(shard)` |
+| Pools | `create_pool(sol, tokens, expected_config_revision)`, `add_liquidity(shares, max_sol, max_tokens)`, `remove_liquidity(shares, min_sol, min_tokens)` |
+| Swaps | `buy_exact_in(gross, min_tokens)`, `buy_exact_out(tokens, max_gross)`, `sell_exact_in(tokens, min_sol)`, `sell_exact_out(sol, max_tokens)` |
+
+The interface is in [`idl/fix_amm.json`](idl/fix_amm.json), the source in [`programs/fix-amm/`](programs/fix-amm/).
+
+```bash
+cargo-build-sbf --manifest-path programs/fix-amm/Cargo.toml --arch v0
+```
+
+```bash
+cargo test -p fix-amm --test money -- --test-threads=1
+```
+
+```bash
+solana-verify build --library-name fix_amm --base-image solanafoundation/solana-verifiable-build:3.1.14
+```
+
+The AMM's money tests run the compiled program in LiteSVM against SPL Token and Token-2022 mints:
+
+- the creation transaction and slot refusing every swap mode for everyone, then the next slot trading;
+- all four swap modes equal to an independent model to the lamport, the trader's balances and the shard's gain equal
+  to the receipt, and the constant product never falling;
+- adds, removes, the last shares emptying the pool, and seeding it again;
+- coarse shares costing a depositor at most one atom;
+- every refusal by name, and compute units per action.
 
 ## License
 

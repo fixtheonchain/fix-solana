@@ -1,0 +1,4 @@
+{
+  "note": "Terms passed to the fix AMM's initialize_config: 1% of the SOL side of every swap, 40% of it to the protocol, 60% kept by liquidity providers. Pools copy them at creation.",
+  "terms": { "fee_bps": 100, "protocol_share_bps": 4000 }
+}

@@ -1216,6 +1216,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2551bf44bc5f776c15044b9b94153a00198be06743e262afaaa61f11ac7523a5"
 
 [[package]]
+name = "fix-amm"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "base64 0.22.1",
+ "bincode",
+ "litesvm",
+ "openssl",
+ "serde_json",
+ "solana-sdk",
+ "spl-token",
+ "spl-token-2022",
+ "spl-token-metadata-interface",
+ "uint",
+]
+
+[[package]]
 name = "fix-launchpad"
 version = "0.1.0"
 dependencies = [

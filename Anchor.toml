@@ -7,10 +7,11 @@ skip-lint = false
 
 [programs.localnet]
 fix_launchpad = "6S1hsbe4XecosNkMDcb6xTreHn2BNmnqr8Sfr1rJfix"
+fix_amm = "boi4jCS8KNarnN28BxRekzKd1hXt86rGUGpBhzkHfix"
 
 [provider]
 cluster = "Localnet"
 wallet = "target/local-fixture-wallet.json"
 
 [workspace]
-members = ["programs/fix-launchpad"]
+members = ["programs/fix-launchpad", "programs/fix-amm"]
