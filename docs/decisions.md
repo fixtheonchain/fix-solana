@@ -14,8 +14,8 @@ for that coin.
 
 Creation accepts only mint public keys whose base58 address ends in lowercase `fix`. It makes a Token-2022 mint with
 on-mint metadata and sends the full fixed supply to its market vault, leaving no creator allocation, mint authority or
-freeze authority. The only creation cost is rent for the mint, market and vault. Market and Config allocations are 214
-and 125 bytes; a protocol shard is 17 bytes.
+freeze authority. The only creation cost is rent for the mint, market and vault. Market and Config allocations are 246
+and 132 bytes since the anti-sniping upgrade (214 and 125 before, which older coins keep); a protocol shard is 17 bytes.
 
 Market records an immutable `created_slot`. Every exact-in and exact-out buy requires `Clock.slot > created_slot`,
 otherwise `BuyNotOpen`; no funds move before this guard. This refuses same-transaction, bundled and separate
