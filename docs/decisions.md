@@ -75,6 +75,25 @@ base58 encodings and run accepted and refused creation. A feature-gated build (`
 guard and subtracts the overhead of an adjacent empty probe; normal builds include no profiling code. The guard
 measures 312 CU.
 
+## Anti-sniping
+
+- **Closing the creation block left the next one open.** The creation slot takes no buy, so the first tradable slot
+  is the one bots race for. A schedule charges a buy there more and steps down to the coin's own rate, so the
+  position costs what it is worth instead of being free.
+- **One rate per slot.** The rate is a function of the slot alone, `start_bps` falling in `steps` equal steps of
+  `step_slots` slots each: every buyer in a slot pays the same, whoever and however they arrive. Sells pay the coin's
+  own rate.
+- **Where the tax goes.** The coin's own fee is split as always; the rest of the total goes to the pool line, so it
+  stays in the coin's reserves and raises its price for every holder. No one, the protocol and the creator included,
+  is paid for the position.
+- **Sealed at creation.** `set_snipe` writes the schedule into the config for coins not yet created and bumps the
+  revision; creation copies it into the coin and nothing changes it after. A quote states its rate and the slot it
+  next falls (`rateUntilSlot`); a buy that lands later pays the same or less.
+- **No layout change for live coins.** A market created since the upgrade carries 32 bytes after its `Market` data
+  (`MarketExt`), the config 7 bytes after its `Config` data (`ConfigExt`); older accounts end where they did and read
+  as all zero, so every live coin keeps its terms and every client keeps its account lists. Receipts since the upgrade
+  are `ReceiptV2`, with `snipe_fee` and `extra_fee` lines; earlier ones stay `Receipt`.
+
 ## Rent
 
 Users pay rent for their own token accounts, which stay theirs to close. Creation pays rent for the mint, market and
@@ -114,6 +133,16 @@ SOL, one pool per mint.
   to its last; a second venue with other terms would break that.
 - **Events.** `PoolCreated` and `Receipt` through `#[event_cpi]`. A receipt's action is 0 create, 1 buy, 2 sell, 3 add,
   4 remove, and it carries the reserves, the shares outstanding and the price after the action.
+
+### Freeze authorities and add bounds
+
+- **A kept freeze authority is refused.** It could freeze a pool's vault and stop every swap and withdrawal, so
+  `create_pool` and `create_pair` refuse a mint whose base freeze authority is set (`UnsupportedMint`), in both token
+  programs. USDC and USDT keep their issuers' freeze authorities and are the two mints accepted with one; the app
+  shows that authority wherever they are held.
+- **An add is bounded both ways.** `add_liquidity` takes `min_sol` and `min_tokens`, `add_pair_liquidity` `min_a`
+  and `min_b`, beside the maximums. A pool emptied and seeded again ahead of an add can no longer move the price the
+  add pays at.
 
 ### Token pairs
 

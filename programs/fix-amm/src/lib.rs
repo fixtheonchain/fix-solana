@@ -85,7 +85,7 @@ pub mod fix_amm {
     /// Adds liquidity at the pool's ratio for exactly `shares`, paying each reserve's share rounded up, at
     /// most `max_sol` and `max_tokens`. Into an empty pool the two maximums go in whole and set the price,
     /// minting their geometric mean, at least `shares`; swaps then open in the next slot.
-    pub fn add_liquidity(ctx: Context<AddLiquidity>, shares: u64, max_sol: u64, max_tokens: u64) -> Result<()> {
+    pub fn add_liquidity(ctx: Context<AddLiquidity>, shares: u64, max_sol: u64, max_tokens: u64, min_sol: u64, min_tokens: u64) -> Result<()> {
         let clock = Clock::get()?;
         let events = EventSink::new(&ctx.accounts.event_authority, ctx.bumps.event_authority);
         let (key, owner) = (ctx.accounts.pool.key(), ctx.accounts.owner.key());
@@ -100,7 +100,8 @@ pub mod fix_amm {
             require!(shares > 0, AmmError::ZeroAmount);
             let sol = math::share_amount(shares, pool.sol_reserve, pool.shares, true)?;
             let tokens = math::share_amount(shares, pool.token_reserve, pool.shares, true)?;
-            require!(sol <= max_sol && tokens <= max_tokens, AmmError::SlippageExceeded);
+            // Both sides bounded both ways: a pool emptied and seeded again since the quote cannot move the price.
+            require!(sol <= max_sol && tokens <= max_tokens && sol >= min_sol && tokens >= min_tokens, AmmError::SlippageExceeded);
             (sol, tokens, shares)
         };
         let position = &mut ctx.accounts.position;
@@ -181,7 +182,7 @@ pub mod fix_amm {
 
     /// Exactly `shares` at the pair's ratio, each side's part rounded up, at most `max_a` and `max_b`. Into an empty
     /// pair both maximums go in whole and set the price, minting their geometric mean, at least `shares`.
-    pub fn add_pair_liquidity(ctx: Context<AddPairLiquidity>, shares: u64, max_a: u64, max_b: u64) -> Result<()> {
+    pub fn add_pair_liquidity(ctx: Context<AddPairLiquidity>, shares: u64, max_a: u64, max_b: u64, min_a: u64, min_b: u64) -> Result<()> {
         let clock = Clock::get()?;
         let events = EventSink::new(&ctx.accounts.event_authority, ctx.bumps.event_authority);
         let (key, owner) = (ctx.accounts.pair.key(), ctx.accounts.owner.key());
@@ -196,7 +197,7 @@ pub mod fix_amm {
             require!(shares > 0, AmmError::ZeroAmount);
             let a = math::share_amount(shares, pair.reserve_a, pair.shares, true)?;
             let b = math::share_amount(shares, pair.reserve_b, pair.shares, true)?;
-            require!(a <= max_a && b <= max_b, AmmError::SlippageExceeded);
+            require!(a <= max_a && b <= max_b && a >= min_a && b >= min_b, AmmError::SlippageExceeded);
             (a, b, shares)
         };
         let position = &mut ctx.accounts.position;

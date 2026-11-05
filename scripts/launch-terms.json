@@ -1,0 +1,3 @@
+{
+  "antiSnipe": { "startBps": 2500, "stepSlots": 10, "steps": 15 }
+}

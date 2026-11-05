@@ -101,6 +101,13 @@ impl Harness {
     fn pool(&self, a: Asset) -> Pool { self.decode(a.pool()) }
     fn tokens(&self, account: Pubkey) -> u64 { StateWithExtensions::<spl_token_2022::state::Account>::unpack(&self.svm.get_account(&account).unwrap().data).unwrap().base.amount }
 
+    /// An SPL Token mint at `key` whose freeze authority is kept, written in place.
+    fn freezable_mint(&mut self, key: Pubkey) -> Asset {
+        let mut data = vec![0u8; 82];
+        spl_token::state::Mint { mint_authority: Some(self.payer.pubkey()).into(), supply: 0, decimals: 6, is_initialized: true, freeze_authority: Some(self.payer.pubkey()).into() }.pack_into_slice(&mut data);
+        self.svm.set_account(key, Account { lamports: 1_000_000_000, data, owner: spl_token::ID, executable: false, rent_epoch: 0 }).unwrap();
+        Asset { mint: key, program: spl_token::ID }
+    }
     /// A six-decimal mint with the payer as its authority.
     fn mint(&mut self, kind: Kind) -> Asset {
         let mint = Keypair::new(); let payer = self.payer.pubkey(); let rent: solana_sdk::rent::Rent = self.svm.get_sysvar();
@@ -160,8 +167,10 @@ impl Harness {
             _ => panic!("unknown mode"),
         }
     }
-    fn add_ix(&self, a: Asset, owner: Pubkey, token: Pubkey, shares: u64, max_sol: u64, max_tokens: u64) -> Instruction {
-        ix(instruction::AddLiquidity { shares, max_sol, max_tokens }, accounts::AddLiquidity { owner, pool: a.pool(), mint: a.mint, vault: a.vault(), owner_token: token, position: a.position(&owner), token_program: a.program, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID })
+    fn add_ix(&self, a: Asset, owner: Pubkey, token: Pubkey, shares: u64, max_sol: u64, max_tokens: u64) -> Instruction { self.add_ix_bounded(a, owner, token, shares, max_sol, max_tokens, 0, 0) }
+    #[allow(clippy::too_many_arguments)]
+    fn add_ix_bounded(&self, a: Asset, owner: Pubkey, token: Pubkey, shares: u64, max_sol: u64, max_tokens: u64, min_sol: u64, min_tokens: u64) -> Instruction {
+        ix(instruction::AddLiquidity { shares, max_sol, max_tokens, min_sol, min_tokens }, accounts::AddLiquidity { owner, pool: a.pool(), mint: a.mint, vault: a.vault(), owner_token: token, position: a.position(&owner), token_program: a.program, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID })
     }
     fn remove_ix(&self, a: Asset, owner: Pubkey, token: Pubkey, shares: u64, min_sol: u64, min_tokens: u64) -> Instruction {
         ix(instruction::RemoveLiquidity { shares, min_sol, min_tokens }, accounts::RemoveLiquidity { owner, pool: a.pool(), mint: a.mint, vault: a.vault(), owner_token: token, position: a.position(&owner), token_program: a.program, event_authority: event_authority(), program: ID })
@@ -588,8 +597,10 @@ impl Harness {
             token_program_a: d.a.program, token_program_b: d.b.program, event_authority: event_authority(), program: ID };
         if exact_in { ix(instruction::SwapPairExactIn { a_to_b, amount_in: amount, min_out: bound }, accs) } else { ix(instruction::SwapPairExactOut { a_to_b, amount_out: amount, max_in: bound }, accs) }
     }
-    fn pair_add_ix(&self, d: Duo, owner: Pubkey, ta: Pubkey, tb: Pubkey, shares: u64, max_a: u64, max_b: u64) -> Instruction {
-        ix(instruction::AddPairLiquidity { shares, max_a, max_b }, accounts::AddPairLiquidity { owner, pair: d.pair(), mint_a: d.a.mint, mint_b: d.b.mint, vault_a: d.vault_a(), vault_b: d.vault_b(),
+    fn pair_add_ix(&self, d: Duo, owner: Pubkey, ta: Pubkey, tb: Pubkey, shares: u64, max_a: u64, max_b: u64) -> Instruction { self.pair_add_ix_bounded(d, owner, ta, tb, shares, max_a, max_b, 0, 0) }
+    #[allow(clippy::too_many_arguments)]
+    fn pair_add_ix_bounded(&self, d: Duo, owner: Pubkey, ta: Pubkey, tb: Pubkey, shares: u64, max_a: u64, max_b: u64, min_a: u64, min_b: u64) -> Instruction {
+        ix(instruction::AddPairLiquidity { shares, max_a, max_b, min_a, min_b }, accounts::AddPairLiquidity { owner, pair: d.pair(), mint_a: d.a.mint, mint_b: d.b.mint, vault_a: d.vault_a(), vault_b: d.vault_b(),
             owner_token_a: ta, owner_token_b: tb, position: d.position(&owner), token_program_a: d.a.program, token_program_b: d.b.program, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID })
     }
     fn pair_remove_ix(&self, d: Duo, owner: Pubkey, ta: Pubkey, tb: Pubkey, shares: u64, min_a: u64, min_b: u64) -> Instruction {
@@ -734,4 +745,50 @@ fn pairs_refuse_by_name_and_measure_their_units() {
     for (field, ceiling) in [("createPair", 130_000u64), ("pairSwap", 70_000), ("addPairLiquidityNewPosition", 70_000), ("addPairLiquidity", 60_000), ("removePairLiquidity", 60_000)] {
         assert!(report[field].as_u64().unwrap() <= ceiling, "{field} exceeds {ceiling}: {report}");
     }
+}
+
+#[test]
+fn freeze_capable_mints_are_refused_except_usdc_and_usdt_and_adds_are_bounded_both_ways() {
+    let mut h = Harness::new();
+    // M-1: a kept freeze authority could freeze the vault and lock every provider's funds.
+    let frozen = h.freezable_mint(Keypair::new().pubkey());
+    let creator = h.wallet(20 * SOL); let token = h.holder(frozen, creator.pubkey(), 1_000 * TOKEN);
+    let create = h.create_ix(frozen, creator.pubkey(), token, SOL, 1_000 * TOKEN, 0);
+    assert!(h.send(vec![create], &[&creator]).unwrap_err().contains("UnsupportedMint"));
+    let plain = h.mint(Kind::Spl); let duo = Duo::new(frozen, plain);
+    let (w, ta, tb) = h.duo_wallet(duo, 1_000 * TOKEN, 1_000 * TOKEN);
+    assert!(h.send(vec![h.create_pair_ix(duo, w.pubkey(), ta, tb, 100 * TOKEN, 100 * TOKEN)], &[&w]).unwrap_err().contains("UnsupportedMint"));
+    // USDC and USDT keep theirs and are the two mints accepted with one.
+    for key in fix_amm::mint::FREEZE_ALLOWED {
+        let stable = h.freezable_mint(key); h.open(stable, SOL, 1_000 * TOKEN);
+        assert_eq!(h.pool(stable).shares, isqrt(SOL as u128 * 1_000 * TOKEN as u128));
+    }
+    // M-2: an add is bounded from below on both sides as well, so an emptied and re-seeded pool cannot move
+    // its price under the quote (the audit's PoC shows the attack). Each lower bound is enforced on its own.
+    let a = h.mint(Kind::Spl); h.open(a, 10 * SOL, 10_000 * TOKEN);
+    let pool = h.pool(a); let shares = pool.shares / 4;
+    let want_sol = (shares as u128 * pool.sol_reserve as u128).div_ceil(pool.shares as u128) as u64;
+    let want_tokens = (shares as u128 * pool.token_reserve as u128).div_ceil(pool.shares as u128) as u64;
+    let victim = h.wallet(40 * SOL); let victim_token = h.holder(a, victim.pubkey(), 20_000 * TOKEN);
+    for (min_sol, min_tokens) in [(want_sol + 1, 0), (0, want_tokens + 1)] {
+        let refused = h.add_ix_bounded(a, victim.pubkey(), victim_token, shares, u64::MAX, u64::MAX, min_sol, min_tokens);
+        assert!(h.send(vec![refused], &[&victim]).unwrap_err().contains("SlippageExceeded"));
+    }
+    let exact = h.add_ix_bounded(a, victim.pubkey(), victim_token, shares, want_sol, want_tokens, want_sol, want_tokens);
+    h.send(vec![exact], &[&victim]).unwrap();
+    assert_eq!(h.decode::<Position>(a.position(&victim.pubkey())).shares, shares);
+    // A pair's add carries the same two lower bounds.
+    let (x, y) = (h.mint(Kind::Spl), h.mint(Kind::Token2022Metadata)); let d = Duo::new(x, y);
+    let (p, pa, pb) = h.duo_wallet(d, 10_000 * TOKEN, 10_000 * TOKEN);
+    h.send(vec![h.create_pair_ix(d, p.pubkey(), pa, pb, 1_000 * TOKEN, 3_000 * TOKEN)], &[&p]).unwrap();
+    let pair = h.pair(d); let shares = pair.shares / 4;
+    let want_a = (shares as u128 * pair.reserve_a as u128).div_ceil(pair.shares as u128) as u64;
+    let want_b = (shares as u128 * pair.reserve_b as u128).div_ceil(pair.shares as u128) as u64;
+    let (v, va, vb) = h.duo_wallet(d, 10_000 * TOKEN, 10_000 * TOKEN);
+    for (min_a, min_b) in [(want_a + 1, 0), (0, want_b + 1)] {
+        let refused = h.pair_add_ix_bounded(d, v.pubkey(), va, vb, shares, u64::MAX, u64::MAX, min_a, min_b);
+        assert!(h.send(vec![refused], &[&v]).unwrap_err().contains("SlippageExceeded"));
+    }
+    h.send(vec![h.pair_add_ix_bounded(d, v.pubkey(), va, vb, shares, want_a, want_b, want_a, want_b)], &[&v]).unwrap();
+    h.assert_pair_books(d, &[p.pubkey(), v.pubkey()]);
 }

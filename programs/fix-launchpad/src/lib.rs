@@ -37,6 +37,14 @@ pub mod fix_launchpad {
         ctx.accounts.config.revision=add(ctx.accounts.config.revision,1)?;
         Ok(())
     }
+    /// Admin only. The anti-sniping schedule copied into every coin created from now on; live coins keep theirs.
+    pub fn set_snipe(ctx: Context<AdminLaunchTerms>, snipe: Snipe) -> Result<()> {
+        snipe.validate()?;
+        let info=ctx.accounts.config.to_account_info();
+        let mut ext=ConfigExt::read(&info)?; ext.version=1; ext.snipe=snipe; ext.write(&info)?;
+        ctx.accounts.config.revision=add(ctx.accounts.config.revision,1)?;
+        Ok(())
+    }
     pub fn propose_admin(ctx: Context<AdminConfig>, new_admin: Pubkey) -> Result<()> {
         require!(new_admin != Pubkey::default(), LaunchError::Unauthorized);
         ctx.accounts.config.pending_admin=new_admin;
@@ -84,6 +92,7 @@ pub mod fix_launchpad {
         let market_key=ctx.accounts.market.key();
         let creator=ctx.accounts.creator.key();
         let terms=ctx.accounts.config.terms;
+        let launch=ConfigExt::read(&ctx.accounts.config.to_account_info())?;
         let events=EventSink::new(&ctx.accounts.event_authority,ctx.bumps.event_authority);
         let market=&mut ctx.accounts.market;
         market.mint=mint_key;
@@ -96,6 +105,8 @@ pub mod fix_launchpad {
         market.bump=ctx.bumps.market;
         market.vault_bump=ctx.bumps.vault;
         market.created_slot=clock.slot;
+        // The coin's later terms go right after its Market data, once, and nothing changes them.
+        MarketExt { version:1, launch_type:0, snipe:launch.snipe, extra_fee_bps:0 }.write(&market.to_account_info())?;
         let bump=[market.bump];
         let signer:&[&[u8]]=&[b"market", mint_key.as_ref(), &bump];
         let metadata=TokenMetadata { update_authority:Default::default(), mint:mint_key, name:name.clone(), symbol:symbol.clone(), uri:uri.clone(), additional_metadata:vec![] };
@@ -207,7 +218,12 @@ fn pay_protocol<'info>(market:&Account<'info,Market>,protocol:&mut Account<'info
     if let Some(r)=route { move_lamports(&market.to_account_info(),&r.recipient,extension_fee)?; }
     Ok(Split { protocol:kept, extension, extension_fee })
 }
-fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16)->Result<(u64,u64,Fees)> {
+/// The rate a buy pays in `slot`: the coin's anti-sniping schedule from its first tradable slot, down to its own rate.
+fn buy_rate(market:&Account<Market>,slot:u64)->Result<(u16,u16)> {
+    let base=market.rate();let ext=MarketExt::read(&market.to_account_info())?;
+    Ok((ext.snipe.rate(base,slot.saturating_sub(market.created_slot+1)),base))
+}
+fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16,base:u16)->Result<(u64,u64,Fees)> {
     if budget==0 && exact_out.is_none() {return Ok((0,0,Fees::default()));}
     let cap=if market.phase==POOL {market.pool_tokens.saturating_sub(1)}else{market.curve_remaining};
     if let Some(out)=exact_out {
@@ -215,16 +231,16 @@ fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16)->Result<(
         let required=if market.phase==POOL {math::pool_buy_net(market.real_sol,market.pool_token_num,market.pool_token_den,out)?}else{math::curve_buy_net(market.virtual_sol,market.virtual_token,out)?};
         let gross=math::gross_for_net(required,rate)?;
         require!(gross<=budget,LaunchError::SlippageExceeded);
-        return Ok((gross,out,math::fees(gross,rate,&market.terms)?));
+        return Ok((gross,out,math::buy_fees(gross,rate,base,&market.terms)?));
     }
     if market.phase!=POOL {
         let maximum_net=math::curve_buy_net(market.virtual_sol,market.virtual_token,cap)?;
         if let Ok(maximum_gross)=math::gross_for_net(maximum_net,rate) {
-            if budget>=maximum_gross {return Ok((maximum_gross,cap,math::fees(maximum_gross,rate,&market.terms)?));}
+            if budget>=maximum_gross {return Ok((maximum_gross,cap,math::buy_fees(maximum_gross,rate,base,&market.terms)?));}
         }
     }
     let mut gross=budget;
-    let mut fees=math::fees(gross,rate,&market.terms)?;
+    let mut fees=math::buy_fees(gross,rate,base,&market.terms)?;
     let net=gross-fees.total;
     let mut out=if market.phase==POOL {math::pool_buy_out(market.real_sol,market.pool_token_num,market.pool_token_den,net)?}else{math::curve_buy_out(market.virtual_sol,market.virtual_token,net)?};
     out=out.min(cap);
@@ -233,7 +249,7 @@ fn quote_buy(market:&Market,budget:u64,exact_out:Option<u64>,rate:u16)->Result<(
         let required=if market.phase==POOL {math::pool_buy_net(market.real_sol,market.pool_token_num,market.pool_token_den,out)?}else{math::curve_buy_net(market.virtual_sol,market.virtual_token,out)?};
         gross=math::gross_for_net(required,rate)?;
         require!(gross<=budget,LaunchError::SlippageExceeded);
-        fees=math::fees(gross,rate,&market.terms)?;
+        fees=math::buy_fees(gross,rate,base,&market.terms)?;
     }
     Ok((gross,out,fees))
 }
@@ -253,7 +269,8 @@ fn execute_buy<'info>(ctx:Context<'_,'_,'info,'info,Trade<'info>>,budget:u64,exa
     require!(clock.slot>market.created_slot,LaunchError::BuyNotOpen);
     require!(budget>0,LaunchError::ZeroAmount);
     let before=market.price()?;
-    let (gross,out,fees)=quote_buy(market,budget,exact_out,market.rate())?;
+    let (rate,base)=buy_rate(market,clock.slot)?;
+    let (gross,out,fees)=quote_buy(market,budget,exact_out,rate,base)?;
     require!(out>0 && out>=min_tokens,LaunchError::SlippageExceeded);
     transfer_in(&ctx.accounts.trader.to_account_info(),&market.to_account_info(),&ctx.accounts.system_program.to_account_info(),gross)?;
     apply_buy(market,gross,out,fees)?;
@@ -318,7 +335,7 @@ fn graduate<'info>(events:&EventSink<'info>,via:Pubkey,market:&mut Account<'info
 #[allow(clippy::too_many_arguments)]
 fn receipt(events:&EventSink,market:&mut Market,key:Pubkey,actor:Pubkey,action:u8,gross:u64,fees:Fees,split:Split,net:u64,tokens:u64,refund:u64,before:u128,after:u128,now:i64)->Result<()> {
     market.receipt_sequence=add(market.receipt_sequence,1)?;
-    events.emit(&Receipt {market:key,actor,action,phase:market.phase,sequence:market.receipt_sequence,timestamp:now,is_creator:actor==market.creator,gross,protocol_fee:split.protocol,creator_fee:fees.creator,pool_fee:fees.pool,net,tokens,refund,price_before:before,price_after:after,price_impact_bps:math::impact(before,after)?,extension:split.extension,extension_fee:split.extension_fee})
+    events.emit(&ReceiptV2 {market:key,actor,action,phase:market.phase,sequence:market.receipt_sequence,timestamp:now,is_creator:actor==market.creator,gross,protocol_fee:split.protocol,creator_fee:fees.creator,pool_fee:fees.pool,net,tokens,refund,price_before:before,price_after:after,price_impact_bps:math::impact(before,after)?,extension:split.extension,extension_fee:split.extension_fee,snipe_fee:fees.snipe,extra_fee:0})
 }
 
 #[error_code]

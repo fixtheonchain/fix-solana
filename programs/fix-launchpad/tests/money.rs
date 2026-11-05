@@ -1,6 +1,6 @@
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, Discriminator, InstructionData, ToAccountMetas};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use fix_launchpad::{accounts, instruction, math, CoinCreated, Market, Protocol, Receipt, Terms, ID, PROTOCOL_SHARDS};
+use fix_launchpad::{accounts, instruction, math, CoinCreated, Market, MarketExt, Protocol, ReceiptV2 as Receipt, Snipe, Terms, ID, PROTOCOL_SHARDS, MARKET_BASE_LEN, MARKET_EXT_LEN};
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use serde_json::{json, Value};
 use solana_sdk::{account::Account, bpf_loader_upgradeable::{self, UpgradeableLoaderState}, clock::Clock, compute_budget::ComputeBudgetInstruction, instruction::{AccountMeta, Instruction}, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
@@ -75,6 +75,32 @@ impl Harness {
             h.send(transfers,&[&creator_signer]).unwrap();
         }
         let create=h.create_ix();h.send(vec![create],&[&creator_signer,&mint_signer]).unwrap();h
+    }
+    fn snipe_ix(&self, admin: Pubkey, snipe: Snipe) -> Instruction {
+        ix(instruction::SetSnipe { snipe }, accounts::AdminLaunchTerms { admin, config: self.config, system_program: solana_sdk::system_program::ID })
+    }
+    fn create_ix_at(&self, mint: Pubkey, revision: u64) -> Instruction {
+        let market = pda(&[b"market", mint.as_ref()]); let vault = pda(&[b"vault", market.as_ref()]);
+        ix(instruction::CreateCoin {name:"Fixture Coin".into(),symbol:"FIXT".into(),uri:"https://example.invalid/fixture.json".into(),expected_config_revision:revision},accounts::CreateCoin {creator:self.creator.pubkey(),config:self.config,mint,market,vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID})
+    }
+    /// A token account for `owner` created in the current slot, so a test can hold the clock where it set it.
+    fn token_account_for(&mut self, owner: Pubkey, mint: Pubkey) -> Pubkey {
+        let a = Keypair::new(); let rent: solana_sdk::rent::Rent = self.svm.get_sysvar();
+        let create = solana_sdk::system_instruction::create_account(&self.payer.pubkey(), &a.pubkey(), rent.minimum_balance(TokenAccount::LEN), TokenAccount::LEN as u64, &spl_token_2022::ID);
+        let init = spl_token_2022::instruction::initialize_account3(&spl_token_2022::ID, &a.pubkey(), &mint, &owner).unwrap();
+        self.send_same_slot(vec![create, init], &[&a]).unwrap(); a.pubkey()
+    }
+    fn set_slot(&mut self, slot: u64) { let mut clock: Clock = self.svm.get_sysvar(); clock.slot = slot; self.svm.set_sysvar(&clock); }
+    /// Swaps the program's ELF in place, as `solana program deploy` does to a live program.
+    fn upgrade_to(&mut self, artifact_name: &str) {
+        let elf = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/deploy").join(artifact_name)).unwrap();
+        let program_data = Pubkey::find_program_address(&[ID.as_ref()], &bpf_loader_upgradeable::ID).0;
+        let mut bytes = bincode::serialize(&UpgradeableLoaderState::ProgramData { slot: 0, upgrade_authority_address: Some(self.creator.pubkey()) }).unwrap();
+        bytes.resize(UpgradeableLoaderState::size_of_programdata_metadata(), 0); bytes.extend_from_slice(&elf);
+        let rent: solana_sdk::rent::Rent = self.svm.get_sysvar();
+        self.svm.set_account(program_data, Account { lamports: rent.minimum_balance(bytes.len()), data: bytes, owner: bpf_loader_upgradeable::ID, executable: false, rent_epoch: 0 }).unwrap();
+        let data = bincode::serialize(&UpgradeableLoaderState::Program { programdata_address: program_data }).unwrap();
+        self.svm.set_account(ID, Account { lamports: rent.minimum_balance(data.len()), data, owner: bpf_loader_upgradeable::ID, executable: true, rent_epoch: 0 }).unwrap();
     }
     fn shard_ix(&self, shard: u8) -> Instruction {
         ix(instruction::CreateProtocolShard { shard }, accounts::CreateProtocolShard { payer: self.payer.pubkey(), protocol: pda(&[b"protocol", &[shard]]), system_program: solana_sdk::system_program::ID })
@@ -174,7 +200,7 @@ impl Extension {
         ix(instruction::RemoveExtension {}, accounts::RemoveExtension { admin, config, extension: self.entry })
     }
 }
-fn receipt_json(r:&Receipt)->Value { json!({"extension":r.extension.to_string(),"extensionFee":r.extension_fee.to_string(),"gross":r.gross.to_string(),"protocol":r.protocol_fee.to_string(),"creator":r.creator_fee.to_string(),"pool":r.pool_fee.to_string(),"net":r.net.to_string(),"tokens":r.tokens.to_string(),"refund":r.refund.to_string(),"beforePrice":r.price_before.to_string(),"afterPrice":r.price_after.to_string(),"priceImpactBps":r.price_impact_bps.to_string()}) }
+fn receipt_json(r:&Receipt)->Value { json!({"snipeFee":r.snipe_fee.to_string(),"extraFee":r.extra_fee.to_string(),"extension":r.extension.to_string(),"extensionFee":r.extension_fee.to_string(),"gross":r.gross.to_string(),"protocol":r.protocol_fee.to_string(),"creator":r.creator_fee.to_string(),"pool":r.pool_fee.to_string(),"net":r.net.to_string(),"tokens":r.tokens.to_string(),"refund":r.refund.to_string(),"beforePrice":r.price_before.to_string(),"afterPrice":r.price_after.to_string(),"priceImpactBps":r.price_impact_bps.to_string()}) }
 
 #[test]
 fn suffix_remainder_matches_real_base58_encodings() {
@@ -270,7 +296,7 @@ fn real_transaction_logs_are_exported_for_sdk_and_indexer_regressions() {
                 let event=if bytes.starts_with(CoinCreated::DISCRIMINATOR) {"CoinCreated"}
                     else if bytes.starts_with(Receipt::DISCRIMINATOR) {
                         let receipt=Receipt::deserialize(&mut &bytes[8..]).unwrap();protocol_fees+=receipt.protocol_fee;
-                        actions.push(receipt.action);receipts.push(receipt_json(&receipt));"Receipt"
+                        actions.push(receipt.action);receipts.push(receipt_json(&receipt));"ReceiptV2"
                     }else{panic!("Unexpected fixture event discriminator")};
                 names.push(event);
             }
@@ -320,7 +346,7 @@ fn pathological_curve_trades_and_receipt_impact_saturates() {
 fn creation_initializes_curve_with_fixed_supply_and_no_purchase() {
     let mut h=Harness::new();h.assert_sol_accounting();assert_eq!(h.m().phase,0);assert_eq!(h.m().real_sol,0);assert_eq!(h.m().creator_fees,0);
     assert_eq!(h.token_balance(h.vault),terms().total_supply);assert_eq!(decode::<Protocol>(&h.svm,h.protocol).accrued,0);
-    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(),214);assert_eq!(h.svm.get_account(&h.config).unwrap().data.len(),125);
+    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(),MARKET_BASE_LEN+MARKET_EXT_LEN);assert_eq!(h.svm.get_account(&h.config).unwrap().data.len(),125);
     assert!(h.svm.get_account(&pda(&[b"prices",h.market.as_ref()])).is_none(),"creation allocates no price record");
     let mint_account=h.svm.get_account(&h.mint.pubkey()).unwrap();let mint=StateWithExtensions::<Mint>::unpack(&mint_account.data).unwrap();
     assert_eq!(mint.base.mint_authority,COption::None);assert_eq!(mint.base.freeze_authority,COption::None);assert_eq!(mint.base.supply,terms().total_supply);assert!(mint.get_extension_types().unwrap().len()>=2);
@@ -546,4 +572,113 @@ fn extension_refusals_are_named_and_plain_trades_never_depend_on_the_registry() 
     h.trade("sellExactIn",100_000,0,&trader,token).unwrap();h.assert_sol_accounting();
     use fix_launchpad::LaunchError as E;
     assert_eq!([E::InvalidExtensionAccounts,E::ExtensionNotRegistered,E::ExtensionPaused,E::ExtensionAuthorityInvalid,E::ExtensionRecipientMismatch,E::InvalidExtensionShare].map(u32::from),[6012,6013,6014,6015,6016,6017],"appended codes keep earlier numbers");
+}
+
+
+/// The schedule written apart from the program: `start` at the first tradable slot, `steps` equal steps of
+/// `every` slots down to the coin's own rate.
+fn snipe_model(base: u64, start: u64, every: u64, steps: u64, elapsed: u64) -> u64 {
+    let step = elapsed / every; if step >= steps { base } else { base + (start - base) * (steps - step) / steps }
+}
+const SNIPE: Snipe = Snipe { start_bps: 2_500, step_slots: 10, steps: 15 };
+
+#[test]
+fn anti_sniping_steps_down_by_slot_the_same_for_every_buyer_and_keeps_the_tax_in_the_reserves() {
+    let mut h = Harness::initialized(terms()); let admin = h.creator.insecure_clone();
+    h.send(vec![h.snipe_ix(admin.pubkey(), SNIPE)], &[&admin]).unwrap();
+    let mint = h.mint.insecure_clone();
+    h.send(vec![h.create_ix_at(mint.pubkey(), 1)], &[&admin, &mint]).unwrap();
+    let ext = MarketExt::read(&solana_account_info(&h, h.market)).unwrap();
+    assert_eq!((ext.version, ext.launch_type, ext.snipe, ext.extra_fee_bps), (1, 0, SNIPE, 0));
+    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(), MARKET_BASE_LEN + MARKET_EXT_LEN);
+    let opens = h.m().created_slot + 1; let base = terms().curve_fee_bps as u64; let t = terms();
+    for elapsed in [0u64, 9, 10, 75, 149, 150, 400] {
+        h.set_slot(opens + elapsed);
+        let rate = snipe_model(base, 2_500, 10, 15, elapsed);
+        // Two buyers in one slot pay the same rate.
+        for _ in 0..2 {
+            let buyer = h.wallet(); let token = h.token_account_for(buyer.pubkey(), mint.pubkey()); let gross = 2_000_000;
+            let buy = h.trade_ix(instruction::BuyExactIn { gross, min_tokens: 1 }, buyer.pubkey(), token);
+            let r = receipt(&h.send_same_slot(vec![buy], &[&buyer]).unwrap(), 1);
+            let total = gross * rate / 10_000; let own = gross * base / 10_000;
+            let protocol = own * t.protocol_share_bps as u64 / 10_000; let pool = own * t.pool_share_bps as u64 / 10_000;
+            assert_eq!((r.gross, r.protocol_fee, r.creator_fee, r.pool_fee, r.snipe_fee, r.extra_fee), (gross, protocol, own - protocol - pool, pool + total - own, total - own, 0), "elapsed {elapsed}");
+            assert_eq!(r.net, gross - total);
+            h.assert_sol_accounting();
+        }
+        // An exact-out buy in the same slot solves its gross at the same rate.
+        let buyer = h.wallet(); let token = h.token_account_for(buyer.pubkey(), mint.pubkey());
+        let before = h.m(); let tokens = 1_000_000;
+        let need = math::curve_buy_net(before.virtual_sol, before.virtual_token, tokens).unwrap();
+        let gross = math::gross_for_net(need, rate as u16).unwrap();
+        let buy = h.trade_ix(instruction::BuyExactOut { tokens, max_gross: gross }, buyer.pubkey(), token);
+        let r = receipt(&h.send_same_slot(vec![buy], &[&buyer]).unwrap(), 1);
+        assert_eq!((r.gross, r.tokens, r.snipe_fee), (gross, tokens, gross * rate / 10_000 - gross * base / 10_000));
+        // Sells pay the coin's own rate throughout.
+        let sell = h.trade_ix(instruction::SellExactIn { tokens: 500_000, min_sol: 1 }, buyer.pubkey(), token);
+        let r = receipt(&h.send_same_slot(vec![sell], &[&buyer]).unwrap(), 2);
+        assert_eq!((r.snipe_fee, r.protocol_fee + r.creator_fee + r.pool_fee), (0, r.gross * base / 10_000));
+    }
+}
+
+/// An `AccountInfo` over a copy of an account, for reading the market's trailing terms in a test.
+fn solana_account_info(h: &Harness, key: Pubkey) -> anchor_lang::prelude::AccountInfo<'static> {
+    let account = h.svm.get_account(&key).unwrap();
+    let key: &'static Pubkey = Box::leak(Box::new(key)); let owner: &'static Pubkey = Box::leak(Box::new(account.owner));
+    let lamports: &'static mut u64 = Box::leak(Box::new(account.lamports)); let data: &'static mut [u8] = Box::leak(account.data.into_boxed_slice());
+    anchor_lang::prelude::AccountInfo::new(key, false, false, lamports, data, owner, false, 0)
+}
+
+#[test]
+fn the_schedule_is_set_by_the_admin_within_bounds_and_creation_checks_the_revision() {
+    let mut h = Harness::initialized(terms()); let admin = h.creator.insecure_clone(); let stranger = h.wallet();
+    assert!(h.send(vec![h.snipe_ix(stranger.pubkey(), SNIPE)], &[&stranger]).unwrap_err().contains("Unauthorized"));
+    for bad in [Snipe { start_bps: 10_000, step_slots: 10, steps: 15 }, Snipe { start_bps: 2_500, step_slots: 0, steps: 15 }, Snipe { start_bps: 2_500, step_slots: 1_000, steps: 10 }] {
+        assert!(h.send(vec![h.snipe_ix(admin.pubkey(), bad)], &[&admin]).unwrap_err().contains("InvalidTerms"), "{bad:?}");
+    }
+    h.send(vec![h.snipe_ix(admin.pubkey(), SNIPE)], &[&admin]).unwrap();
+    let mint = h.mint.insecure_clone();
+    assert!(h.send(vec![h.create_ix_at(mint.pubkey(), 0)], &[&admin, &mint]).unwrap_err().contains("ConfigChanged"));
+    // Turning the schedule off reaches only coins created afterwards.
+    h.send(vec![h.create_ix_at(mint.pubkey(), 1)], &[&admin, &mint]).unwrap();
+    h.send(vec![h.snipe_ix(admin.pubkey(), Snipe::default())], &[&admin]).unwrap();
+    assert_eq!(MarketExt::read(&solana_account_info(&h, h.market)).unwrap().snipe, SNIPE);
+    let later = fixture_mint(1);
+    h.send(vec![h.create_ix_at(later.pubkey(), 2)], &[&admin, &later]).unwrap();
+    assert_eq!(MarketExt::read(&solana_account_info(&h, pda(&[b"market", later.pubkey().as_ref()]))).unwrap().snipe, Snipe::default());
+}
+
+#[test]
+fn a_coin_created_before_the_upgrade_keeps_its_terms_and_coins_after_it_get_the_schedule() {
+    // The program as deployed on mainnet creates and trades a coin, then the upgrade replaces it in place.
+    let mut h = Harness::initialized_artifact(terms(), "fix_launchpad_mainnet.so"); let admin = h.creator.insecure_clone();
+    let mint = h.mint.insecure_clone();
+    h.send(vec![h.create_ix_at(mint.pubkey(), 0)], &[&admin, &mint]).unwrap();
+    let holder = h.wallet(); let token = h.token_account(holder.pubkey());
+    let buy = h.trade_ix(instruction::BuyExactIn { gross: 10_000_000, min_tokens: 1 }, holder.pubkey(), token);
+    let old = h.send(vec![buy], &[&holder]).unwrap();
+    assert!(receipts(&old).is_empty(), "the deployed program emits the first receipt layout");
+    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(), MARKET_BASE_LEN);
+    h.upgrade_to("fix_launchpad.so");
+    h.send(vec![h.snipe_ix(admin.pubkey(), SNIPE)], &[&admin]).unwrap();
+    // The old coin reads no schedule: its buys and sells pay its own rate, right after the upgrade.
+    let base = terms().curve_fee_bps as u64;
+    let buy = h.trade_ix(instruction::BuyExactIn { gross: 10_000_000, min_tokens: 1 }, holder.pubkey(), token);
+    let r = receipt(&h.send(vec![buy], &[&holder]).unwrap(), 1);
+    assert_eq!((r.snipe_fee, r.protocol_fee + r.creator_fee + r.pool_fee), (0, 10_000_000 * base / 10_000));
+    let sell = h.trade_ix(instruction::SellExactIn { tokens: 1_000_000, min_sol: 1 }, holder.pubkey(), token);
+    receipt(&h.send(vec![sell], &[&holder]).unwrap(), 2);
+    h.assert_sol_accounting();
+    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(), MARKET_BASE_LEN, "a live coin's account is never resized");
+    // A coin created after the upgrade carries the schedule.
+    let later = fixture_mint(1); let market = pda(&[b"market", later.pubkey().as_ref()]);
+    h.send(vec![h.create_ix_at(later.pubkey(), 1)], &[&admin, &later]).unwrap();
+    assert_eq!(MarketExt::read(&solana_account_info(&h, market)).unwrap().snipe, SNIPE);
+    let created: Market = decode(&h.svm, market); h.set_slot(created.created_slot + 1);
+    let buyer = h.wallet(); let vault = pda(&[b"vault", market.as_ref()]);
+    let token = h.token_account_for(buyer.pubkey(), later.pubkey());
+    let buy = ix(instruction::BuyExactIn { gross: 4_000_000, min_tokens: 1 }, accounts::Trade { trader: buyer.pubkey(), market, mint: later.pubkey(), vault, trader_token: token, protocol: pda(&[b"protocol", &[protocol_shard(&market)]]), token_program: spl_token_2022::ID, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID });
+    let shard = protocol_shard(&market); if h.svm.get_account(&pda(&[b"protocol", &[shard]])).is_none() { let ix = h.shard_ix(shard); h.send_same_slot(vec![ix], &[]).unwrap(); }
+    let r = receipt(&h.send_same_slot(vec![buy], &[&buyer]).unwrap(), 1);
+    assert_eq!(r.snipe_fee, 4_000_000 * 2_500 / 10_000 - 4_000_000 * base / 10_000);
 }

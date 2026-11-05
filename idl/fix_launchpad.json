@@ -1284,6 +1284,65 @@
       ]
     },
     {
+      "name": "set_snipe",
+      "docs": [
+        "Admin only. The anti-sniping schedule copied into every coin created from now on; live coins keep theirs."
+      ],
+      "discriminator": [
+        46,
+        175,
+        11,
+        143,
+        231,
+        183,
+        175,
+        67
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "snipe",
+          "type": {
+            "defined": {
+              "name": "Snipe"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "update_config",
       "discriminator": [
         29,
@@ -1431,6 +1490,19 @@
         105,
         152,
         178
+      ]
+    },
+    {
+      "name": "ReceiptV2",
+      "discriminator": [
+        179,
+        228,
+        31,
+        226,
+        75,
+        238,
+        35,
+        175
       ]
     }
   ],
@@ -1791,6 +1863,9 @@
     },
     {
       "name": "Receipt",
+      "docs": [
+        "Receipts before the anti-sniping upgrade. Kept so their transactions still decode."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1875,6 +1950,132 @@
               "The extension's line, paid out of the protocol's part: protocol_fee + extension_fee is the protocol share."
             ],
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReceiptV2",
+      "docs": [
+        "Every receipt since the anti-sniping upgrade: `Receipt`'s lines, plus the anti-sniping part of a buy's fee",
+        "(inside `pool_fee`, which keeps it in the coin's reserves) and the creator's extra fee."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "actor",
+            "type": "pubkey"
+          },
+          {
+            "name": "action",
+            "type": "u8"
+          },
+          {
+            "name": "phase",
+            "type": "u8"
+          },
+          {
+            "name": "sequence",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "is_creator",
+            "type": "bool"
+          },
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "creator_fee",
+            "type": "u64"
+          },
+          {
+            "name": "pool_fee",
+            "type": "u64"
+          },
+          {
+            "name": "net",
+            "type": "u64"
+          },
+          {
+            "name": "tokens",
+            "type": "u64"
+          },
+          {
+            "name": "refund",
+            "type": "u64"
+          },
+          {
+            "name": "price_before",
+            "type": "u128"
+          },
+          {
+            "name": "price_after",
+            "type": "u128"
+          },
+          {
+            "name": "price_impact_bps",
+            "type": "i64"
+          },
+          {
+            "name": "extension",
+            "type": "pubkey"
+          },
+          {
+            "name": "extension_fee",
+            "type": "u64"
+          },
+          {
+            "name": "snipe_fee",
+            "docs": [
+              "The part of `pool_fee` above the coin's own rate: what the anti-sniping schedule charged this buy."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "extra_fee",
+            "docs": [
+              "The creator's extra fee line."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Snipe",
+      "docs": [
+        "A buy right after a coin opens pays `start_bps`, falling in `steps` equal steps of `step_slots` slots each to the",
+        "coin's own fee rate. All zero means none. Only buys pay it; the same slot gives every buyer the same rate."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "start_bps",
+            "type": "u16"
+          },
+          {
+            "name": "step_slots",
+            "type": "u16"
+          },
+          {
+            "name": "steps",
+            "type": "u16"
           }
         ]
       }

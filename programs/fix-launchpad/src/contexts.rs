@@ -24,6 +24,14 @@ pub struct AdminConfig<'info> {
     pub admin: Signer<'info>,
     #[account(mut, seeds=[b"config"], bump=config.bump, has_one=admin)] pub config: Account<'info, Config>,
 }
+/// Grows the config to hold the launch terms added after launch (`ConfigExt`), paid by the admin.
+#[derive(Accounts)]
+pub struct AdminLaunchTerms<'info> {
+    #[account(mut)] pub admin: Signer<'info>,
+    #[account(mut, seeds=[b"config"], bump=config.bump, has_one=admin @ LaunchError::Unauthorized,
+        realloc=CONFIG_BASE_LEN+ConfigExt::INIT_SPACE, realloc::payer=admin, realloc::zero=false)] pub config: Account<'info, Config>,
+    pub system_program: Program<'info, System>,
+}
 #[derive(Accounts)]
 #[instruction(program_id: Pubkey)]
 pub struct RegisterExtension<'info> {
@@ -56,7 +64,7 @@ pub struct CreateCoin<'info> {
     #[account(seeds=[b"config"], bump=config.bump)] pub config: Account<'info, Config>,
     /// CHECK: A new signer account allocated and initialized as Token-2022 in the handler.
     #[account(mut)] pub mint: Signer<'info>,
-    #[account(init, payer=creator, space=8+Market::INIT_SPACE, seeds=[b"market",mint.key().as_ref()], bump)] pub market: Account<'info, Market>,
+    #[account(init, payer=creator, space=MARKET_BASE_LEN+MARKET_EXT_LEN, seeds=[b"market",mint.key().as_ref()], bump)] pub market: Account<'info, Market>,
     /// CHECK: The vault PDA is allocated and initialized by the handler.
     #[account(mut, seeds=[b"vault",market.key().as_ref()], bump)] pub vault: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token2022>,

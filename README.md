@@ -41,11 +41,21 @@ flowchart LR
 - The fee terms (rate per phase and the split) are copied into the coin at creation and never change for that coin.
 - One total fee per trade, split between protocol, creator and a share that stays in the pool. Protocol and pool
   shares round down and the creator receives the remainder.
-- Every trade, claim and graduation emits an itemized `Receipt`: `gross`, `protocol_fee`, `creator_fee`, `pool_fee`,
-  `net`, `tokens`, `refund`, `price_before`, `price_after`, `price_impact_bps`, `extension` and `extension_fee`.
-  Quotes match execution exactly.
+- Every trade, claim and graduation emits an itemized `ReceiptV2`: `gross`, `protocol_fee`, `creator_fee`, `pool_fee`,
+  `net`, `tokens`, `refund`, `price_before`, `price_after`, `price_impact_bps`, `extension`, `extension_fee`,
+  `snipe_fee` and `extra_fee`. Transactions from before the anti-sniping upgrade carry the first layout, `Receipt`.
+  Quotes match execution exactly; a buy that lands after its quoted slot can only pay the same rate or less.
 - Protocol fees accrue to 64 PDAs seeded `["protocol", shard]`, credited in the instruction that charges them, so
   markets share no write lock. There is no withdrawal instruction.
+
+## Anti-sniping
+
+A coin created since the anti-sniping upgrade carries a schedule in its terms. A buy in the coin's first tradable
+slot pays `start_bps`; the rate falls in `steps` equal steps of `step_slots` slots each, down to the coin's own rate.
+Every buyer in the same slot pays the same rate, sells always pay the coin's own rate, and the part above the coin's
+own rate goes to the pool line, so it stays in the coin's reserves and raises its price for every holder. The receipt
+names that part (`snipe_fee`). Launch schedule: 25% in the first tradable slot, falling every 10 slots to the coin's
+own rate after 150 slots ([`scripts/launch-terms.json`](scripts/launch-terms.json)).
 
 ## Extensions
 
@@ -75,7 +85,7 @@ sequenceDiagram
 
 | Group | Instructions |
 | --- | --- |
-| Config | `initialize_config(terms)`, `update_config(terms, paused)`, `propose_admin(new_admin)`, `accept_admin`, `create_protocol_shard(shard)` |
+| Config | `initialize_config(terms)`, `update_config(terms, paused)`, `set_snipe(snipe)`, `propose_admin(new_admin)`, `accept_admin`, `create_protocol_shard(shard)` |
 | Extensions | `register_extension(program_id, share_bps, recipient)`, `set_extension_paused(paused)`, `remove_extension` |
 | Coins and trading | `create_coin(name, symbol, uri, expected_config_revision)`, `buy_exact_in(gross, min_tokens)`, `buy_exact_out(tokens, max_gross)`, `sell_exact_in(tokens, min_sol)`, `sell_exact_out(sol, max_tokens)`, `claim_creator_fees` |
 
@@ -86,9 +96,9 @@ fees or funds.
 
 | Account | Seeds | Holds |
 | --- | --- | --- |
-| `Config` | `["config"]` | Revision, admin, pending admin, pause flag, the terms new coins copy |
+| `Config` | `["config"]` | Revision, admin, pending admin, pause flag, the terms new coins copy; after them, the anti-sniping schedule (`ConfigExt`) |
 | `Protocol` | `["protocol", shard]`, shard 0–63 | Accrued protocol fees |
-| `Market` | `["market", mint]` | Mint, creator, the coin's locked terms, phase, curve and pool reserves, burned tokens, creator fees, receipt sequence, `created_slot` |
+| `Market` | `["market", mint]` | Mint, creator, the coin's locked terms, phase, curve and pool reserves, burned tokens, creator fees, receipt sequence, `created_slot`; after them, 32 bytes of later terms (`MarketExt`: the schedule, the launch type, the extra fee), all zero on coins created before |
 | vault | `["vault", market]` | The market's Token-2022 token account |
 | `Extension` | `["extension", program_id]` | The extension's program, signing PDA, share recipient, share in bps of the protocol part, pause flag |
 | event authority | `["__event_authority"]` | Signs the self-CPIs that carry events |
@@ -97,7 +107,7 @@ Terms: `total_supply`, `decimals`, `virtual_sol`, `virtual_token`, `curve_tokens
 `protocol_share_bps`, `creator_share_bps`, `pool_share_bps`. The launch terms are in
 [`scripts/mainnet-terms.json`](scripts/mainnet-terms.json).
 
-Events: `CoinCreated`, `Receipt` and `Graduated`, emitted through Anchor's `#[event_cpi]` so they travel as
+Events: `CoinCreated`, `ReceiptV2` (`Receipt` before the anti-sniping upgrade) and `Graduated`, emitted through Anchor's `#[event_cpi]` so they travel as
 inner-instruction data, which the runtime records in full. The full interface is in
 [`idl/fix_launchpad.json`](idl/fix_launchpad.json).
 
@@ -212,9 +222,9 @@ flowchart LR
 | Group | Instructions |
 | --- | --- |
 | Config | `initialize_config(terms)`, `update_config(terms, paused)`, `propose_admin(new_admin)`, `accept_admin`, `create_protocol_shard(shard)` |
-| Pools | `create_pool(sol, tokens, expected_config_revision)`, `add_liquidity(shares, max_sol, max_tokens)`, `remove_liquidity(shares, min_sol, min_tokens)` |
+| Pools | `create_pool(sol, tokens, expected_config_revision)`, `add_liquidity(shares, max_sol, max_tokens, min_sol, min_tokens)`, `remove_liquidity(shares, min_sol, min_tokens)` |
 | Swaps | `buy_exact_in(gross, min_tokens)`, `buy_exact_out(tokens, max_gross)`, `sell_exact_in(tokens, min_sol)`, `sell_exact_out(sol, max_tokens)` |
-| Pairs | `create_pair(amount_a, amount_b, expected_config_revision)`, `add_pair_liquidity(shares, max_a, max_b)`, `remove_pair_liquidity(shares, min_a, min_b)`, `swap_pair_exact_in(a_to_b, amount_in, min_out)`, `swap_pair_exact_out(a_to_b, amount_out, max_in)` |
+| Pairs | `create_pair(amount_a, amount_b, expected_config_revision)`, `add_pair_liquidity(shares, max_a, max_b, min_a, min_b)`, `remove_pair_liquidity(shares, min_a, min_b)`, `swap_pair_exact_in(a_to_b, amount_in, min_out)`, `swap_pair_exact_out(a_to_b, amount_out, max_in)` |
 
 The interface is in [`idl/fix_amm.json`](idl/fix_amm.json), the source in [`programs/fix-amm/`](programs/fix-amm/).
 

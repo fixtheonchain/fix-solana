@@ -27,14 +27,25 @@ pub fn ceil_div(n: u128, d: u128) -> Result<u128> {
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, Debug, PartialEq, Eq, InitSpace)]
-pub struct Fees { pub total: u64, pub protocol: u64, pub creator: u64, pub pool: u64 }
+pub struct Fees { pub total: u64, pub protocol: u64, pub creator: u64, pub pool: u64, pub snipe: u64 }
 
 pub fn fees(gross: u64, rate: u16, terms: &Terms) -> Result<Fees> {
     let total = mul_div(gross, rate as u64, BPS)?;
     let protocol = mul_div(total, terms.protocol_share_bps as u64, BPS)?;
     let pool = mul_div(total, terms.pool_share_bps as u64, BPS)?;
     let creator = sub(sub(total, protocol)?, pool)?;
-    Ok(Fees { total, protocol, creator, pool })
+    Ok(Fees { total, protocol, creator, pool, snipe: 0 })
+}
+/// A buy's fee at `rate`: the coin's own fee at `base`, split as every trade's is, and the rest of the total to
+/// the pool line, which keeps it in the coin's reserves. `total` is `gross * rate` rounded down, as `gross_for_net`
+/// assumes, so the inverse still holds.
+pub fn buy_fees(gross: u64, rate: u16, base: u16, terms: &Terms) -> Result<Fees> {
+    let mut lines = fees(gross, base, terms)?;
+    if rate > base {
+        let total = mul_div(gross, rate as u64, BPS)?;
+        lines.snipe = sub(total, lines.total)?; lines.pool = add(lines.pool, lines.snipe)?; lines.total = total;
+    }
+    Ok(lines)
 }
 
 /// Minimal gross whose fee-net value covers `net`. Binary search avoids a fee-rounding off-by-one.

@@ -208,6 +208,14 @@
         {
           "name": "max_tokens",
           "type": "u64"
+        },
+        {
+          "name": "min_sol",
+          "type": "u64"
+        },
+        {
+          "name": "min_tokens",
+          "type": "u64"
         }
       ]
     },
@@ -419,6 +427,14 @@
         },
         {
           "name": "max_b",
+          "type": "u64"
+        },
+        {
+          "name": "min_a",
+          "type": "u64"
+        },
+        {
+          "name": "min_b",
           "type": "u64"
         }
       ]
