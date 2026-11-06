@@ -122,6 +122,7 @@ inner-instruction data, which the runtime records in full. The full interface is
 | [`programs/fix-launchpad/src/vanity.rs`](programs/fix-launchpad/src/vanity.rs) | The `fix` mint suffix check |
 | [`programs/fix-launchpad/tests/money.rs`](programs/fix-launchpad/tests/money.rs) | LiteSVM tests against the built SBF binaries |
 | [`programs/fix-test-extension/`](programs/fix-test-extension/) | A test-only extension the money tests route trades through |
+| [`programs/fix-test-hook/`](programs/fix-test-hook/) | A test-only hook the AMM's money tests open hooked pools and pairs with |
 | [`idl/fix_launchpad.json`](idl/fix_launchpad.json) | Anchor IDL |
 | [`scripts/mainnet-terms.json`](scripts/mainnet-terms.json) | Launch terms for `initialize_config` |
 | [`docs/decisions.md`](docs/decisions.md) | Arithmetic, rounding, extension, event and rent decisions |
@@ -192,7 +193,7 @@ flowchart LR
     P --> L["add / remove<br/>exact shares at the pool's ratio,<br/>positions instead of LP tokens"]
 ```
 
-- **One pool per mint.** `["pool", mint]` keeps SOL as lamports above its rent and tokens in `["vault", pool]` under
+- **A plain pool per mint.** `["pool", mint]` keeps SOL as lamports above its rent and tokens in `["vault", pool]` under
   the mint's own token program. Reserves are tracked in the pool account, so a donation changes no price.
 - **The seeding slot is closed.** No buy or sell lands in the slot liquidity goes into an empty pool, the creator's
   included (`SwapNotOpen`); swaps open in the next slot. An emptied pool seeded again closes that slot the same way.
@@ -218,6 +219,12 @@ flowchart LR
   config, positions at `["position", pair, owner]`, the mint rules and the launchpad refusal on either side work as
   they do for pools. `PairCreated`, and one `PairReceipt` per action with both sides' amounts: 0 create, 1 A to B,
   2 B to A, 3 add, 4 remove.
+- **Hooks.** `create_hooked_pool` and `create_hooked_pair` open a venue at `["pool", mint, hook]` or
+  `["pair", mint_a, mint_b, hook]`, beside the plain one, with a final program as its hook (`HookNotFinal` while it can
+  still be upgraded). Each swap and add there passes the hook and its `["fix-hook", venue]` account, and before any
+  funds move the AMM calls `on_fix_action(HookCall)` with the venue, the actor, the action, the slot, both amounts and
+  the reserves before and after. The hook refuses by failing; it signs nothing and writes only its own account.
+  Removals never call it, so every share stays withdrawable. There is no hook fee.
 
 | Group | Instructions |
 | --- | --- |
@@ -225,11 +232,16 @@ flowchart LR
 | Pools | `create_pool(sol, tokens, expected_config_revision)`, `add_liquidity(shares, max_sol, max_tokens, min_sol, min_tokens)`, `remove_liquidity(shares, min_sol, min_tokens)` |
 | Swaps | `buy_exact_in(gross, min_tokens)`, `buy_exact_out(tokens, max_gross)`, `sell_exact_in(tokens, min_sol)`, `sell_exact_out(sol, max_tokens)` |
 | Pairs | `create_pair(amount_a, amount_b, expected_config_revision)`, `add_pair_liquidity(shares, max_a, max_b, min_a, min_b)`, `remove_pair_liquidity(shares, min_a, min_b)`, `swap_pair_exact_in(a_to_b, amount_in, min_out)`, `swap_pair_exact_out(a_to_b, amount_out, max_in)` |
+| Hooks | `create_hooked_pool(sol, tokens, expected_config_revision)`, `create_hooked_pair(amount_a, amount_b, expected_config_revision)`; swaps and adds on a hooked venue append the hook and its account |
 
 The interface is in [`idl/fix_amm.json`](idl/fix_amm.json), the source in [`programs/fix-amm/`](programs/fix-amm/).
 
 ```bash
 cargo-build-sbf --manifest-path programs/fix-amm/Cargo.toml --arch v0
+```
+
+```bash
+cargo-build-sbf --manifest-path programs/fix-test-hook/Cargo.toml --arch v0
 ```
 
 ```bash
@@ -250,6 +262,10 @@ The AMM's money tests run the compiled program in LiteSVM against SPL Token and 
 - a pair of an SPL Token and a Token-2022 mint: its seeding slot closed in both directions, swaps both ways in both
   modes equal to the model, the protocol's part booked in each input token, the vaults always holding the reserves
   plus that part, adds and removes, the pair emptied and seeded again;
+- a hooked pool and a hooked pair, through the test-only hook in [`programs/fix-test-hook/`](programs/fix-test-hook/):
+  every swap and add reaching the hook with its amounts before funds move, a refusal stopping the action, a removal
+  never reaching it, a hook that tries to take the trader's lamports or call the AMM back failing, a hook with an
+  upgrade authority refused, and every venue's accounts checked against its address;
 - every refusal by name, mints out of order included, and compute units per action.
 
 ## License

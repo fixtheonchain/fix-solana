@@ -1,5 +1,5 @@
 [workspace]
-members = ["programs/fix-launchpad", "programs/fix-test-extension", "programs/fix-amm"]
+members = ["programs/fix-launchpad", "programs/fix-test-extension", "programs/fix-amm", "programs/fix-test-hook"]
 resolver = "2"
 
 [profile.release]

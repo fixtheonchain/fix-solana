@@ -102,7 +102,7 @@ vault. An extension's registry entry is paid by the admin and returns to the adm
 ## The fix AMM
 
 `programs/fix-amm` holds pools for tokens that were not born on the launchpad: any SPL Token or Token-2022 mint against
-SOL, one pool per mint.
+SOL, one plain pool per mint and one per hook.
 
 - **The seeding slot is closed to swaps.** A pool's first liquidity sets its price. Buys and sells require
   `Clock.slot > seeded_slot`, for every wallet, so nobody holds a pool's price before the rest of the market can see
@@ -167,3 +167,35 @@ SOL.
 - **Events.** `PairCreated` and `PairReceipt`. A pair receipt's action is 0 create, 1 A to B, 2 B to A, 3 add,
   4 remove; it carries both sides' amounts (on a swap, what was paid in with the fee and what was paid out), the fee
   lines in the input token, the reserves, the shares and the price after, B atoms per A atom scaled by 2^64.
+
+### Hooks
+
+A pool or a pair can be opened with a hook: a program the venue tells about every swap and add before any funds move,
+and which can refuse the action. A venue's own rule (an allow list, a size cap, trading hours, a price band) runs on
+chain inside the trade, while the AMM's money path stays the same.
+
+- **A venue of its own, set at creation.** `create_hooked_pool` opens `["pool", mint, hook]` and `create_hooked_pair`
+  opens `["pair", mint_a, mint_b, hook]`; the hook's address is written in the 32 bytes after the account's data and
+  never changes. The plain venue beside it stays open to anyone, so a hook never captures a mint's existing liquidity.
+  Every pool and pair instruction checks that the account sits at the address its seeds and its hook give
+  (`InvalidVenue`).
+- **Final hooks only.** The hook must be an executable program other than the AMM, and final: under the upgradeable
+  loader its ProgramData has no upgrade authority, and programs under the older loaders cannot change
+  (`HookNotFinal`). The rule liquidity providers and traders read when they join a venue is the rule that runs for the
+  venue's whole life.
+- **One call, before funds move.** A hooked swap or add carries the hook and its account for the venue,
+  `["fix-hook", venue]` under the hook (`HookAccounts` otherwise). Once the action's amounts are computed and before
+  any token or lamport moves, the AMM calls `on_fix_action(HookCall)` (`sha256("global:on_fix_action")[..8]`, then
+  the borsh `HookCall`): the venue, the actor, the action (1 buy or A to B, 2 sell or B to A, 3 add), the slot, the
+  two amounts and both reserves before and after, enough to rule on who, how much, when and at what price.
+- **A hook can refuse, and nothing else.** The hook's account goes writable and the venue and actor read-only, none
+  of them as signers, so a hook writes its own account and no other: it cannot change amounts, fees or reserves, move
+  the actor's funds or sign for anyone, and a call back into the AMM is refused by the runtime. Failing refuses the
+  action; succeeding lets it go ahead exactly as quoted. The hook's account must exist and belong to the hook when the
+  venue is created.
+- **Removals are never hooked.** `remove_liquidity` and `remove_pair_liquidity` take no hook accounts and make no
+  call, so a liquidity provider's way out never depends on another program and every share stays withdrawable.
+- **No hook fee.** The hook is paid nothing and takes nothing; a hooked venue's terms are copied from the config like
+  any other's.
+- **Pairs alike.** A hooked pair calls its hook on swaps in both directions and on adds, `a` and `b` in the call being
+  the pair's sides, and never on a removal.

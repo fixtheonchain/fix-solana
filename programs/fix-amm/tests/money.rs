@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use fix_amm::{accounts, instruction, Config, Pool, PoolCreated, Position, Protocol, Receipt, Terms, ID, LAUNCHPAD_ID, PROTOCOL_SHARDS};
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use serde_json::{json, Value};
-use solana_sdk::{account::Account, bpf_loader_upgradeable::{self, UpgradeableLoaderState}, clock::Clock, compute_budget::ComputeBudgetInstruction, instruction::Instruction, pubkey::Pubkey, signature::{Keypair, Signer}, system_instruction, transaction::Transaction};
+use solana_sdk::{account::Account, bpf_loader_upgradeable::{self, UpgradeableLoaderState}, clock::Clock, compute_budget::ComputeBudgetInstruction, instruction::{AccountMeta, Instruction}, pubkey::Pubkey, signature::{Keypair, Signer}, system_instruction, transaction::Transaction};
 use spl_token_2022::extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions};
 
 /// The launch terms: 1% of the SOL side, 40% of it to the protocol and 60% kept by liquidity providers.
@@ -221,6 +221,8 @@ fn error_codes_are_stable() {
     assert_eq!(u32::from(fix_amm::AmmError::SwapNotOpen), 6008);
     assert_eq!(u32::from(fix_amm::AmmError::InsufficientShares), 6012);
     assert_eq!(u32::from(fix_amm::AmmError::PairOrder), 6013);
+    assert_eq!(u32::from(fix_amm::AmmError::HookNotFinal), 6014);
+    assert_eq!(u32::from(fix_amm::AmmError::InvalidVenue), 6016);
 }
 
 #[test]
@@ -791,4 +793,202 @@ fn freeze_capable_mints_are_refused_except_usdc_and_usdt_and_adds_are_bounded_bo
     }
     h.send(vec![h.pair_add_ix_bounded(d, v.pubkey(), va, vb, shares, want_a, want_b, want_a, want_b)], &[&v]).unwrap();
     h.assert_pair_books(d, &[p.pubkey(), v.pubkey()]);
+}
+
+// ---------- hooks ----------
+
+/// The TEST-ONLY hook program (programs/fix-test-hook), loaded final.
+const HOOK: Pubkey = Pubkey::new_from_array([0x6b; 32]);
+const HOOK_STATE_LEN_CALLS: usize = 41;
+fn hook_state(venue: &Pubkey) -> Pubkey { Pubkey::find_program_address(&[b"fix-hook", venue.as_ref()], &HOOK).0 }
+fn hooked_pool(mint: &Pubkey) -> Pubkey { pda(&[b"pool", mint.as_ref(), HOOK.as_ref()]) }
+fn hooked_pair(d: Duo) -> Pubkey { pda(&[b"pair", d.a.mint.as_ref(), d.b.mint.as_ref(), HOOK.as_ref()]) }
+/// The same instruction aimed at another venue: each account moved by `moves`, the hook and its account for `venue` appended.
+fn rehome(mut instruction: Instruction, moves: &[(Pubkey, Pubkey)], venue: Option<Pubkey>) -> Instruction {
+    for meta in instruction.accounts.iter_mut() { if let Some((_, to)) = moves.iter().find(|(from, _)| *from == meta.pubkey) { meta.pubkey = *to; } }
+    if let Some(venue) = venue { instruction.accounts.push(AccountMeta::new_readonly(HOOK, false)); instruction.accounts.push(AccountMeta::new(hook_state(&venue), false)); }
+    instruction
+}
+/// The plain pool's addresses moved to the hooked pool's, for `owners`' positions.
+fn pool_moves(a: Asset, owners: &[Pubkey]) -> Vec<(Pubkey, Pubkey)> {
+    let hp = hooked_pool(&a.mint);
+    let mut moves = vec![(a.pool(), hp), (a.vault(), pda(&[b"vault", hp.as_ref()])), (a.protocol(), pda(&[b"protocol", &[shard_of(&hp)]]))];
+    for owner in owners { moves.push((a.position(owner), pda(&[b"position", hp.as_ref(), owner.as_ref()]))); }
+    moves
+}
+fn pair_moves(d: Duo, owners: &[Pubkey]) -> Vec<(Pubkey, Pubkey)> {
+    let hp = hooked_pair(d);
+    let mut moves = vec![(d.pair(), hp), (d.vault_a(), pda(&[b"vault", hp.as_ref(), d.a.mint.as_ref()])), (d.vault_b(), pda(&[b"vault", hp.as_ref(), d.b.mint.as_ref()]))];
+    for owner in owners { moves.push((d.position(owner), pda(&[b"position", hp.as_ref(), owner.as_ref()]))); }
+    moves
+}
+/// The calls a hook recorded for a venue, and the last one: (action, amount_a, amount_b, reserves after).
+fn hook_seen(h: &Harness, venue: &Pubkey) -> (u64, u8, u64, u64, u64, u64) {
+    let data = h.svm.get_account(&hook_state(venue)).unwrap().data;
+    let calls = u64::from_le_bytes(data[HOOK_STATE_LEN_CALLS..HOOK_STATE_LEN_CALLS + 8].try_into().unwrap());
+    let call = &data[49..];
+    let word = |at: usize| u64::from_le_bytes(call[at..at + 8].try_into().unwrap());
+    assert_eq!(&call[0..32], venue.as_ref(), "the call names its venue");
+    (calls, call[64], word(73), word(81), word(105), word(113))
+}
+impl Harness {
+    fn load_hook(&mut self) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/deploy/fix_test_hook.so");
+        assert!(path.exists(), "Build the test hook: cargo-build-sbf --manifest-path programs/fix-test-hook/Cargo.toml --arch v0");
+        if self.svm.get_account(&HOOK).is_none() { self.svm.add_program_from_file(HOOK, path).unwrap(); }
+    }
+    fn hook_ix(&self, data: Vec<u8>, venue: Pubkey, init: bool) -> Instruction {
+        let state = hook_state(&venue);
+        let accounts = if init { vec![AccountMeta::new(self.payer.pubkey(), true), AccountMeta::new(state, false), AccountMeta::new_readonly(solana_sdk::system_program::ID, false)] } else { vec![AccountMeta::new(state, false)] };
+        Instruction { program_id: HOOK, accounts, data }
+    }
+    /// Opens the hook's account for `venue` with a mode, a limit on `amount_a` (0: none) and a blocked actor.
+    fn hook_init(&mut self, venue: Pubkey, mode: u8, limit: u64, blocked: Pubkey) {
+        let mut data = vec![0u8]; data.extend(venue.as_ref()); data.push(mode); data.extend(limit.to_le_bytes()); data.extend(blocked.as_ref());
+        let ix = self.hook_ix(data, venue, true); self.send(vec![ix], &[]).unwrap();
+    }
+    fn hook_set(&mut self, venue: Pubkey, mode: u8, limit: u64, blocked: Pubkey) {
+        let mut data = vec![1u8]; data.push(mode); data.extend(limit.to_le_bytes()); data.extend(blocked.as_ref());
+        let ix = self.hook_ix(data, venue, false); self.send(vec![ix], &[]).unwrap();
+    }
+    fn create_hooked_ix(&self, a: Asset, creator: Pubkey, token: Pubkey, sol: u64, tokens: u64, hook: Pubkey, hook_program_data: Pubkey) -> Instruction {
+        let hp = pda(&[b"pool", a.mint.as_ref(), hook.as_ref()]);
+        ix(instruction::CreateHookedPool { sol, tokens, expected_config_revision: 0 }, accounts::CreateHookedPool {
+            creator, config: self.config, mint: a.mint, pool: hp, vault: pda(&[b"vault", hp.as_ref()]), creator_token: token, position: pda(&[b"position", hp.as_ref(), creator.as_ref()]),
+            launchpad_market: a.launchpad_market(), hook, hook_program_data, hook_state: Pubkey::find_program_address(&[b"fix-hook", hp.as_ref()], &hook).0,
+            token_program: a.program, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID })
+    }
+}
+
+#[test]
+fn a_hooked_pool_tells_its_hook_every_swap_and_add_and_never_holds_a_removal() {
+    let mut h = Harness::new(); h.load_hook();
+    let a = h.mint(Kind::Spl); let hp = hooked_pool(&a.mint);
+    let creator = h.wallet(50 * SOL); let creator_token = h.holder(a, creator.pubkey(), 100_000 * TOKEN);
+    // The hook's account for the pool has to exist first.
+    let create = h.create_hooked_ix(a, creator.pubkey(), creator_token, 10 * SOL, 10_000 * TOKEN, HOOK, HOOK);
+    assert!(h.send(vec![create.clone()], &[&creator]).unwrap_err().contains("HookAccounts"));
+    h.hook_init(hp, 0, 2 * SOL, Pubkey::default());
+    h.send(vec![create], &[&creator]).unwrap();
+    assert_eq!(fix_amm::hook_of(&account_info(&h, hp), fix_amm::POOL_BASE_LEN).unwrap(), Some(HOOK));
+    // The mint's plain pool stays open to anyone beside it.
+    h.open(a, SOL, 1_000 * TOKEN);
+    let trader = h.wallet(50 * SOL); let token = h.holder(a, trader.pubkey(), 1_000 * TOKEN);
+    let moves = pool_moves(a, &[creator.pubkey(), trader.pubkey()]);
+    // A swap that leaves out the hook's accounts is refused by name.
+    let bare = rehome(h.swap_ix(a, "buyExactIn", SOL, 1, trader.pubkey(), token), &moves, None);
+    assert!(h.send(vec![bare], &[&trader]).unwrap_err().contains("HookAccounts"));
+    // Every swap mode and an add reach the hook once, with the amounts the receipt books and the reserves after.
+    let mut calls = 0;
+    for (mode, amount) in [("buyExactIn", SOL), ("buyExactOut", 100 * TOKEN), ("sellExactIn", 50 * TOKEN), ("sellExactOut", SOL / 4)] {
+        let swap = rehome(h.swap_ix(a, mode, amount, if mode.ends_with("Out") { u64::MAX } else { 1 }, trader.pubkey(), token), &moves, Some(hp));
+        let r = receipt(&h.send(vec![swap], &[&trader]).unwrap());
+        calls += 1; let pool: Pool = h.decode(hp);
+        let (seen, action, amount_a, amount_b, after_a, after_b) = hook_seen(&h, &hp);
+        let expect = if mode.starts_with("buy") { (1, r.gross, r.tokens) } else { (2, r.net, r.tokens) };
+        assert_eq!((seen, action, amount_a, amount_b, after_a, after_b), (calls, expect.0, expect.1, expect.2, pool.sol_reserve, pool.token_reserve), "{mode}");
+    }
+    let add = rehome(h.add_ix(a, trader.pubkey(), token, 1_000_000, u64::MAX, u64::MAX), &moves, Some(hp));
+    let r = receipt(&h.send(vec![add], &[&trader]).unwrap()); calls += 1;
+    let seen = hook_seen(&h, &hp);
+    assert_eq!((seen.0, seen.1, seen.2, seen.3), (calls, 3, r.gross, r.tokens), "an add reaches the hook with its two deposits");
+    // The hook refuses a buy over its limit, and one from the actor it blocks; nothing moves.
+    let before: Pool = h.decode(hp);
+    let big = rehome(h.swap_ix(a, "buyExactIn", 3 * SOL, 1, trader.pubkey(), token), &moves, Some(hp));
+    assert!(h.send(vec![big], &[&trader]).unwrap_err().contains("custom program error: 0x1b59"));
+    h.hook_set(hp, 0, 0, trader.pubkey());
+    let blocked = rehome(h.swap_ix(a, "buyExactIn", SOL / 10, 1, trader.pubkey(), token), &moves, Some(hp));
+    assert!(h.send(vec![blocked], &[&trader]).is_err());
+    let blocked_add = rehome(h.add_ix(a, trader.pubkey(), token, 1_000_000, u64::MAX, u64::MAX), &moves, Some(hp));
+    assert!(h.send(vec![blocked_add], &[&trader]).is_err());
+    let after: Pool = h.decode(hp);
+    assert_eq!((after.sol_reserve, after.token_reserve, after.shares), (before.sol_reserve, before.token_reserve, before.shares));
+    // A blocked owner still takes every share out: removals never reach the hook.
+    let shares = h.decode::<Position>(pda(&[b"position", hp.as_ref(), trader.pubkey().as_ref()])).shares;
+    let remove = rehome(h.remove_ix(a, trader.pubkey(), token, shares, 0, 0), &moves, None);
+    h.send(vec![remove], &[&trader]).unwrap();
+    assert_eq!(hook_seen(&h, &hp).0, calls, "a removal never calls the hook");
+    // A hook can't spend the actor's lamports, and can't call the AMM back.
+    for mode in [1u8, 2] {
+        h.hook_set(hp, mode, 0, Pubkey::default());
+        let lamports = h.balance(trader.pubkey());
+        let swap = rehome(h.swap_ix(a, "buyExactIn", SOL / 10, 1, trader.pubkey(), token), &moves, Some(hp));
+        assert!(h.send(vec![swap], &[&trader]).is_err(), "mode {mode}");
+        assert_eq!(h.balance(trader.pubkey()), lamports, "mode {mode} moved nothing");
+    }
+    let remove = rehome(h.remove_ix(a, creator.pubkey(), creator_token, h.decode::<Position>(pda(&[b"position", hp.as_ref(), creator.pubkey().as_ref()])).shares, 0, 0), &moves, None);
+    h.send(vec![remove], &[&creator]).unwrap();
+    assert_eq!(h.decode::<Pool>(hp).shares, 0, "every share came out with the hook refusing everything");
+}
+
+#[test]
+fn a_hook_must_be_final_and_a_hooked_pair_calls_it_both_ways() {
+    let mut h = Harness::new(); h.load_hook();
+    // An upgradeable hook with an upgrade authority is refused; the same program with none is accepted.
+    let elf = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/deploy/fix_test_hook.so")).unwrap();
+    let rent: solana_sdk::rent::Rent = h.svm.get_sysvar();
+    for (index, authority) in [Some(Keypair::new().pubkey()), None].into_iter().enumerate() {
+        let hook = Pubkey::new_from_array([0x70 + index as u8; 32]); let program_data = Pubkey::find_program_address(&[hook.as_ref()], &bpf_loader_upgradeable::ID).0;
+        let mut bytes = bincode::serialize(&UpgradeableLoaderState::ProgramData { slot: 0, upgrade_authority_address: authority }).unwrap();
+        bytes.resize(UpgradeableLoaderState::size_of_programdata_metadata(), 0); bytes.extend_from_slice(&elf);
+        h.svm.set_account(program_data, Account { lamports: rent.minimum_balance(bytes.len()), data: bytes, owner: bpf_loader_upgradeable::ID, executable: false, rent_epoch: 0 }).unwrap();
+        let data = bincode::serialize(&UpgradeableLoaderState::Program { programdata_address: program_data }).unwrap();
+        h.svm.set_account(hook, Account { lamports: rent.minimum_balance(data.len()), data, owner: bpf_loader_upgradeable::ID, executable: true, rent_epoch: 0 }).unwrap();
+        let a = h.mint(Kind::Spl); let venue = pda(&[b"pool", a.mint.as_ref(), hook.as_ref()]);
+        let state = Pubkey::find_program_address(&[b"fix-hook", venue.as_ref()], &hook).0;
+        let mut init = vec![0u8]; init.extend(venue.as_ref()); init.push(0); init.extend(0u64.to_le_bytes()); init.extend(Pubkey::default().as_ref());
+        h.send(vec![Instruction { program_id: hook, accounts: vec![AccountMeta::new(h.payer.pubkey(), true), AccountMeta::new(state, false), AccountMeta::new_readonly(solana_sdk::system_program::ID, false)], data: init }], &[]).unwrap();
+        let creator = h.wallet(20 * SOL); let token = h.holder(a, creator.pubkey(), 1_000 * TOKEN);
+        let create = h.create_hooked_ix(a, creator.pubkey(), token, SOL, 1_000 * TOKEN, hook, program_data);
+        let result = h.send(vec![create], &[&creator]);
+        if authority.is_some() { assert!(result.unwrap_err().contains("HookNotFinal")); } else { result.unwrap(); }
+    }
+    // A program that isn't executable is no hook.
+    let a = h.mint(Kind::Spl); let creator = h.wallet(20 * SOL); let token = h.holder(a, creator.pubkey(), 1_000 * TOKEN);
+    let stranger = h.wallet(SOL).pubkey();
+    assert!(h.send(vec![h.create_hooked_ix(a, creator.pubkey(), token, SOL, 1_000 * TOKEN, stranger, stranger)], &[&creator]).unwrap_err().contains("HookNotFinal"));
+    // A hooked pair: swaps both ways and an add reach the hook; a removal doesn't.
+    let (x, y) = (h.mint(Kind::Spl), h.mint(Kind::Token2022Metadata)); let d = Duo::new(x, y); let hp = hooked_pair(d);
+    h.hook_init(hp, 0, 0, Pubkey::default());
+    let (p, pa, pb) = h.duo_wallet(d, 10_000 * TOKEN, 10_000 * TOKEN);
+    let market = |m: &Pubkey| Pubkey::find_program_address(&[b"market", m.as_ref()], &LAUNCHPAD_ID).0;
+    let create = ix(instruction::CreateHookedPair { amount_a: 1_000 * TOKEN, amount_b: 3_000 * TOKEN, expected_config_revision: 0 }, accounts::CreateHookedPair {
+        creator: p.pubkey(), config: h.config, mint_a: d.a.mint, mint_b: d.b.mint, pair: hp, vault_a: pda(&[b"vault", hp.as_ref(), d.a.mint.as_ref()]), vault_b: pda(&[b"vault", hp.as_ref(), d.b.mint.as_ref()]),
+        creator_token_a: pa, creator_token_b: pb, position: pda(&[b"position", hp.as_ref(), p.pubkey().as_ref()]), launchpad_market_a: market(&d.a.mint), launchpad_market_b: market(&d.b.mint),
+        hook: HOOK, hook_program_data: HOOK, hook_state: hook_state(&hp), token_program_a: d.a.program, token_program_b: d.b.program, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID });
+    h.send(vec![create], &[&p]).unwrap();
+    let (t, ta, tb) = h.duo_wallet(d, 1_000 * TOKEN, 1_000 * TOKEN);
+    let moves = pair_moves(d, &[p.pubkey(), t.pubkey()]);
+    for (a_to_b, exact_in, amount) in [(true, true, 10 * TOKEN), (false, false, 5 * TOKEN)] {
+        let swap = rehome(h.pair_swap_ix(d, a_to_b, exact_in, amount, if exact_in { 1 } else { u64::MAX }, t.pubkey(), ta, tb), &moves, Some(hp));
+        h.send(vec![swap], &[&t]).unwrap();
+        let pair: Pair = h.decode(hp); let (_, action, _, _, after_a, after_b) = hook_seen(&h, &hp);
+        assert_eq!((action, after_a, after_b), (if a_to_b { 1 } else { 2 }, pair.reserve_a, pair.reserve_b));
+    }
+    let add = rehome(h.pair_add_ix(d, t.pubkey(), ta, tb, 1_000_000, u64::MAX, u64::MAX), &moves, Some(hp));
+    h.send(vec![add], &[&t]).unwrap();
+    assert_eq!((hook_seen(&h, &hp).0, hook_seen(&h, &hp).1), (3, 3));
+    h.hook_set(hp, 0, 0, t.pubkey());
+    let shares = h.decode::<Position>(pda(&[b"position", hp.as_ref(), t.pubkey().as_ref()])).shares;
+    h.send(vec![rehome(h.pair_remove_ix(d, t.pubkey(), ta, tb, shares, 0, 0), &moves, None)], &[&t]).unwrap();
+    assert_eq!(hook_seen(&h, &hp).0, 3);
+    h.assert_pair_books_at(hp, d, &[p.pubkey(), t.pubkey()]);
+}
+
+/// An `AccountInfo` over a copy of an account, for the program's own readers in a test.
+fn account_info(h: &Harness, key: Pubkey) -> anchor_lang::prelude::AccountInfo<'static> {
+    let account = h.svm.get_account(&key).unwrap();
+    let key: &'static Pubkey = Box::leak(Box::new(key)); let owner: &'static Pubkey = Box::leak(Box::new(account.owner));
+    let lamports: &'static mut u64 = Box::leak(Box::new(account.lamports)); let data: &'static mut [u8] = Box::leak(account.data.into_boxed_slice());
+    anchor_lang::prelude::AccountInfo::new(key, false, false, lamports, data, owner, false, 0)
+}
+impl Harness {
+    /// A hooked pair's vaults hold its reserves plus the protocol's booked parts; shares are the positions' sum.
+    fn assert_pair_books_at(&self, hp: Pubkey, d: Duo, owners: &[Pubkey]) {
+        let p: Pair = self.decode(hp);
+        assert_eq!(self.tokens(pda(&[b"vault", hp.as_ref(), d.a.mint.as_ref()])), p.reserve_a + p.protocol_a);
+        assert_eq!(self.tokens(pda(&[b"vault", hp.as_ref(), d.b.mint.as_ref()])), p.reserve_b + p.protocol_b);
+        let held: u64 = owners.iter().filter_map(|o| self.svm.get_account(&pda(&[b"position", hp.as_ref(), o.as_ref()])).map(|_| self.decode::<Position>(pda(&[b"position", hp.as_ref(), o.as_ref()])).shares)).sum();
+        assert_eq!(held, p.shares);
+    }
 }

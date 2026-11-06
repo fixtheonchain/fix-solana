@@ -182,3 +182,63 @@ pub struct PairReceipt {
     pub price_after: u128,
     pub price_impact_bps: i64,
 }
+
+/// A pool or pair opened with a hook carries it right after its own data, written once at creation. Venues opened
+/// without one end at their data and read as none.
+pub const POOL_BASE_LEN: usize = 8 + Pool::INIT_SPACE;
+pub const PAIR_BASE_LEN: usize = 8 + Pair::INIT_SPACE;
+pub const HOOK_EXT_LEN: usize = 32;
+/// The account a hook keeps for one venue, `["fix-hook", venue]` under the hook program. It exists before the venue
+/// opens, and every call passes it writable.
+pub const HOOK_STATE_SEED: &[u8] = b"fix-hook";
+/// `sha256("global:on_fix_action")[..8]`: an Anchor hook takes the call as its `on_fix_action(call: HookCall)`.
+pub const HOOK_CALL_TAG: [u8; 8] = [171, 39, 133, 218, 105, 247, 235, 179];
+
+/// The hook a venue opened with, or none.
+pub fn hook_of(venue: &AccountInfo, base: usize) -> Result<Option<Pubkey>> {
+    let data = venue.try_borrow_data()?;
+    if data.len() < base + HOOK_EXT_LEN { return Ok(None); }
+    let key = Pubkey::new_from_array(data[base..base + HOOK_EXT_LEN].try_into().map_err(|_| error!(crate::AmmError::InvalidVenue))?);
+    Ok((key != Pubkey::default()).then_some(key))
+}
+pub fn write_hook(venue: &AccountInfo, base: usize, hook: &Pubkey) -> Result<()> {
+    let mut data = venue.try_borrow_mut_data()?;
+    require!(data.len() >= base + HOOK_EXT_LEN, crate::AmmError::InvalidVenue);
+    data[base..base + HOOK_EXT_LEN].copy_from_slice(hook.as_ref()); Ok(())
+}
+/// A pool's address from its own seeds: `["pool", mint]`, or `["pool", mint, hook]` for a hooked pool.
+pub fn pool_address(info: &AccountInfo, pool: &Pool) -> Pubkey {
+    let bump = [pool.bump];
+    let address = match hook_of(info, POOL_BASE_LEN).ok().flatten() {
+        Some(hook) => Pubkey::create_program_address(&[b"pool", pool.mint.as_ref(), hook.as_ref(), &bump], &crate::ID),
+        None => Pubkey::create_program_address(&[b"pool", pool.mint.as_ref(), &bump], &crate::ID),
+    };
+    address.unwrap_or_default()
+}
+/// A pair's address from its own seeds: `["pair", mint_a, mint_b]`, or with the hook after them.
+pub fn pair_address(info: &AccountInfo, pair: &Pair) -> Pubkey {
+    let bump = [pair.bump];
+    let address = match hook_of(info, PAIR_BASE_LEN).ok().flatten() {
+        Some(hook) => Pubkey::create_program_address(&[b"pair", pair.mint_a.as_ref(), pair.mint_b.as_ref(), hook.as_ref(), &bump], &crate::ID),
+        None => Pubkey::create_program_address(&[b"pair", pair.mint_a.as_ref(), pair.mint_b.as_ref(), &bump], &crate::ID),
+    };
+    address.unwrap_or_default()
+}
+
+/// What a hook is told, once per swap or add on its venue, before any funds move. For a pool `a` is SOL and `b` its
+/// token. `action` is 1 or 2 for a swap (buy or sell; A to B or B to A) and 3 for an add. A hook that fails refuses
+/// the action; it is never told about a removal, which it cannot refuse.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HookCall {
+    pub venue: Pubkey,
+    pub actor: Pubkey,
+    pub action: u8,
+    pub slot: u64,
+    /// A swap's amounts paid in and out, on their sides; an add's two deposits.
+    pub amount_a: u64,
+    pub amount_b: u64,
+    pub reserve_a_before: u64,
+    pub reserve_b_before: u64,
+    pub reserve_a_after: u64,
+    pub reserve_b_after: u64,
+}

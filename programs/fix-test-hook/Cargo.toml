@@ -1,0 +1,15 @@
+[package]
+name = "fix-test-hook"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "TEST ONLY: a hook for the AMM's LiteSVM suite and local chain. Never deployed to mainnet."
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+solana-program = "=2.2.1"

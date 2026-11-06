@@ -73,24 +73,7 @@
         },
         {
           "name": "pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint",
@@ -243,28 +226,7 @@
         },
         {
           "name": "pair",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  97,
-                  105,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint_a"
-              },
-              {
-                "kind": "account",
-                "path": "mint_b"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint_a",
@@ -459,24 +421,7 @@
         },
         {
           "name": "pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint",
@@ -610,24 +555,7 @@
         },
         {
           "name": "pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint",
@@ -737,6 +665,601 @@
         },
         {
           "name": "max_gross",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "create_hooked_pair",
+      "docs": [
+        "Opens a pair with a hook, at `[\"pair\", mint_a, mint_b, hook]` beside the mints' plain pair, under the same",
+        "rules as a hooked pool."
+      ],
+      "discriminator": [
+        1,
+        172,
+        233,
+        24,
+        128,
+        204,
+        106,
+        146
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_a"
+        },
+        {
+          "name": "mint_b"
+        },
+        {
+          "name": "pair",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  105,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              },
+              {
+                "kind": "account",
+                "path": "hook"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_a",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_b",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_token_a",
+          "writable": true
+        },
+        {
+          "name": "creator_token_b",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pair"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "launchpad_market_a",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_a"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                100,
+                47,
+                116,
+                162,
+                164,
+                231,
+                104,
+                101,
+                208,
+                111,
+                47,
+                53,
+                93,
+                251,
+                67,
+                108,
+                202,
+                220,
+                250,
+                165,
+                39,
+                39,
+                162,
+                224,
+                169,
+                186,
+                208,
+                247,
+                131,
+                221,
+                209
+              ]
+            }
+          }
+        },
+        {
+          "name": "launchpad_market_b",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_b"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                100,
+                47,
+                116,
+                162,
+                164,
+                231,
+                104,
+                101,
+                208,
+                111,
+                47,
+                53,
+                93,
+                251,
+                67,
+                108,
+                202,
+                220,
+                250,
+                165,
+                39,
+                39,
+                162,
+                224,
+                169,
+                186,
+                208,
+                247,
+                131,
+                221,
+                209
+              ]
+            }
+          }
+        },
+        {
+          "name": "hook"
+        },
+        {
+          "name": "hook_program_data"
+        },
+        {
+          "name": "hook_state"
+        },
+        {
+          "name": "token_program_a"
+        },
+        {
+          "name": "token_program_b"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_a",
+          "type": "u64"
+        },
+        {
+          "name": "amount_b",
+          "type": "u64"
+        },
+        {
+          "name": "expected_config_revision",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "create_hooked_pool",
+      "docs": [
+        "Opens a pool with a hook, at `[\"pool\", mint, hook]` beside the mint's plain pool. The hook must be a program",
+        "that can no longer change, and its account for this pool must exist. The AMM calls it on every swap and add."
+      ],
+      "discriminator": [
+        167,
+        147,
+        84,
+        111,
+        119,
+        29,
+        243,
+        214
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "account",
+                "path": "hook"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_token",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "launchpad_market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                1,
+                100,
+                47,
+                116,
+                162,
+                164,
+                231,
+                104,
+                101,
+                208,
+                111,
+                47,
+                53,
+                93,
+                251,
+                67,
+                108,
+                202,
+                220,
+                250,
+                165,
+                39,
+                39,
+                162,
+                224,
+                169,
+                186,
+                208,
+                247,
+                131,
+                221,
+                209
+              ]
+            }
+          }
+        },
+        {
+          "name": "hook"
+        },
+        {
+          "name": "hook_program_data"
+        },
+        {
+          "name": "hook_state"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  95,
+                  95,
+                  101,
+                  118,
+                  101,
+                  110,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "sol",
+          "type": "u64"
+        },
+        {
+          "name": "tokens",
+          "type": "u64"
+        },
+        {
+          "name": "expected_config_revision",
           "type": "u64"
         }
       ]
@@ -1499,24 +2022,7 @@
         },
         {
           "name": "pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint",
@@ -1656,28 +2162,7 @@
         },
         {
           "name": "pair",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  97,
-                  105,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint_a"
-              },
-              {
-                "kind": "account",
-                "path": "mint_b"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint_a",
@@ -1860,24 +2345,7 @@
         },
         {
           "name": "pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint",
@@ -2011,24 +2479,7 @@
         },
         {
           "name": "pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint",
@@ -2164,28 +2615,7 @@
         },
         {
           "name": "pair",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  97,
-                  105,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint_a"
-              },
-              {
-                "kind": "account",
-                "path": "mint_b"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint_a",
@@ -2341,28 +2771,7 @@
         },
         {
           "name": "pair",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  97,
-                  105,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint_a"
-              },
-              {
-                "kind": "account",
-                "path": "mint_b"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "mint_a",
@@ -2746,6 +3155,21 @@
       "code": 6013,
       "name": "PairOrder",
       "msg": "A pair names two different mints, the smaller address first"
+    },
+    {
+      "code": 6014,
+      "name": "HookNotFinal",
+      "msg": "A hook must be a program that can no longer be upgraded"
+    },
+    {
+      "code": 6015,
+      "name": "HookAccounts",
+      "msg": "A hooked venue's swap or add passes its hook and the hook's account for it"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidVenue",
+      "msg": "This account is not a venue at its own address"
     }
   ],
   "types": [
