@@ -94,6 +94,23 @@ measures 312 CU.
   as all zero, so every live coin keeps its terms and every client keeps its account lists. Receipts since the upgrade
   are `ReceiptV2`, with `snipe_fee` and `extra_fee` lines; earlier ones stay `Receipt`.
 
+## Launch types
+
+- **Two kinds of coin.** A Builder launch is a project that keeps building: a creator line in every fee, 1% split
+  40% protocol, 50% creator and 10% pool. A Meme launch has no creator line and a lower fee, 0.6%: 0.4% to the
+  protocol and 0.2% to the pool. The type is chosen at creation and every new coin names one; there is no third.
+- **Fees, not curves.** Both types run on the config's supply and curve and carry the same anti-sniping schedule, so
+  a coin's type changes only who its fee pays and how much.
+- **Sealed like every term.** `set_launch_types` writes both types' fees into the config for coins not yet created,
+  each checked as full terms on the config's curve, and bumps the revision; `update_config` checks every set type
+  against the new curve. Creation copies the type's fees into the coin's terms and its type into `MarketExt`, and
+  nothing changes them after.
+- **No creator line, no stranded lamport.** Shares are bps of the fee, so a Meme fee's protocol part is 6,667 bps of
+  it and the pool line takes the rest, rounding included. Terms with a creator share of zero keep the remainder in
+  the pool line instead of a creator line nobody claims.
+- **Live coins unchanged.** Coins created before launch types keep their terms and read as type 0; the config grows
+  to 27 bytes after its data (`ConfigExt`), and no market account changes size.
+
 ## Rent
 
 Users pay rent for their own token accounts, which stay theirs to close. Creation pays rent for the mint, market and

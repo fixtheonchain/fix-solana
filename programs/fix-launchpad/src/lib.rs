@@ -32,6 +32,9 @@ pub mod fix_launchpad {
     }
     pub fn update_config(ctx: Context<AdminConfig>, terms: Terms, paused: bool) -> Result<()> {
         terms.validate()?;
+        // Each set launch type takes the new supply and curve with its own fees; both must still be valid terms.
+        let ext=ConfigExt::read(&ctx.accounts.config.to_account_info())?;
+        for fees in [ext.builder, ext.meme] { if fees.is_set() { fees.terms(terms).validate()?; } }
         ctx.accounts.config.terms=terms;
         ctx.accounts.config.paused=paused;
         ctx.accounts.config.revision=add(ctx.accounts.config.revision,1)?;
@@ -41,7 +44,17 @@ pub mod fix_launchpad {
     pub fn set_snipe(ctx: Context<AdminLaunchTerms>, snipe: Snipe) -> Result<()> {
         snipe.validate()?;
         let info=ctx.accounts.config.to_account_info();
-        let mut ext=ConfigExt::read(&info)?; ext.version=1; ext.snipe=snipe; ext.write(&info)?;
+        let mut ext=ConfigExt::read(&info)?; ext.version=ext.version.max(1); ext.snipe=snipe; ext.write(&info)?;
+        ctx.accounts.config.revision=add(ctx.accounts.config.revision,1)?;
+        Ok(())
+    }
+    /// Admin only. The fees Builder and Meme coins are created with from now on, each on the config's supply and
+    /// curve; live coins keep theirs.
+    pub fn set_launch_types(ctx: Context<AdminLaunchTerms>, builder: LaunchFees, meme: LaunchFees) -> Result<()> {
+        let base=ctx.accounts.config.terms;
+        builder.terms(base).validate()?; meme.terms(base).validate()?;
+        let info=ctx.accounts.config.to_account_info();
+        let mut ext=ConfigExt::read(&info)?; ext.version=2; ext.builder=builder; ext.meme=meme; ext.write(&info)?;
         ctx.accounts.config.revision=add(ctx.accounts.config.revision,1)?;
         Ok(())
     }
@@ -70,7 +83,8 @@ pub mod fix_launchpad {
         ctx.accounts.config.pending_admin=Pubkey::default();
         Ok(())
     }
-    pub fn create_coin(ctx: Context<CreateCoin>, name: String, symbol: String, uri: String, expected_config_revision: u64) -> Result<()> {
+    /// `launch_type` is `BUILDER` or `MEME`; the coin takes that type's fees on the config's curve, sealed.
+    pub fn create_coin(ctx: Context<CreateCoin>, name: String, symbol: String, uri: String, expected_config_revision: u64, launch_type: u8) -> Result<()> {
         #[cfg(feature="measure-mint-suffix")]
         let probe_start=anchor_lang::solana_program::compute_units::sol_remaining_compute_units();
         #[cfg(feature="measure-mint-suffix")]
@@ -91,8 +105,8 @@ pub mod fix_launchpad {
         let mint_key=ctx.accounts.mint.key();
         let market_key=ctx.accounts.market.key();
         let creator=ctx.accounts.creator.key();
-        let terms=ctx.accounts.config.terms;
         let launch=ConfigExt::read(&ctx.accounts.config.to_account_info())?;
+        let terms=launch.fees(launch_type).ok_or(error!(LaunchError::InvalidLaunchType))?.terms(ctx.accounts.config.terms);
         let events=EventSink::new(&ctx.accounts.event_authority,ctx.bumps.event_authority);
         let market=&mut ctx.accounts.market;
         market.mint=mint_key;
@@ -106,7 +120,7 @@ pub mod fix_launchpad {
         market.vault_bump=ctx.bumps.vault;
         market.created_slot=clock.slot;
         // The coin's later terms go right after its Market data, once, and nothing changes them.
-        MarketExt { version:1, launch_type:0, snipe:launch.snipe, extra_fee_bps:0 }.write(&market.to_account_info())?;
+        MarketExt { version:2, launch_type, snipe:launch.snipe, extra_fee_bps:0 }.write(&market.to_account_info())?;
         let bump=[market.bump];
         let signer:&[&[u8]]=&[b"market", mint_key.as_ref(), &bump];
         let metadata=TokenMetadata { update_authority:Default::default(), mint:mint_key, name:name.clone(), symbol:symbol.clone(), uri:uri.clone(), additional_metadata:vec![] };
@@ -358,4 +372,5 @@ pub enum LaunchError {
     #[msg("The extension authority is not its signing PDA")] ExtensionAuthorityInvalid,
     #[msg("The share account is not the extension's recipient")] ExtensionRecipientMismatch,
     #[msg("An extension share is at most 10,000 bps of the protocol part")] InvalidExtensionShare,
+    #[msg("A coin is a Builder (1) or Meme (2) launch, and its type must be set in the config")] InvalidLaunchType,
 }

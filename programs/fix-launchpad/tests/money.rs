@@ -1,6 +1,6 @@
-use anchor_lang::{AccountDeserialize, AnchorDeserialize, Discriminator, InstructionData, ToAccountMetas};
+use anchor_lang::{AccountDeserialize, AnchorDeserialize, Discriminator, InstructionData, Space, ToAccountMetas};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use fix_launchpad::{accounts, instruction, math, CoinCreated, Market, MarketExt, Protocol, ReceiptV2 as Receipt, Snipe, Terms, ID, PROTOCOL_SHARDS, MARKET_BASE_LEN, MARKET_EXT_LEN};
+use fix_launchpad::{accounts, instruction, math, CoinCreated, Config, ConfigExt, LaunchFees, Market, MarketExt, Protocol, ReceiptV2 as Receipt, Snipe, Terms, ID, PROTOCOL_SHARDS, MARKET_BASE_LEN, MARKET_EXT_LEN, CONFIG_BASE_LEN, STANDARD as STANDARD_TYPE, BUILDER, MEME};
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use serde_json::{json, Value};
 use solana_sdk::{account::Account, bpf_loader_upgradeable::{self, UpgradeableLoaderState}, clock::Clock, compute_budget::ComputeBudgetInstruction, instruction::{AccountMeta, Instruction}, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
@@ -13,6 +13,13 @@ fn terms() -> Terms { Terms { total_supply: 1_000_000_000, decimals: 6,
     curve_fee_bps: 300, pool_fee_bps: 100,
     protocol_share_bps: 5_000, creator_share_bps: 3_000, pool_share_bps: 2_000 } }
 fn pda(seeds: &[&[u8]]) -> Pubkey { Pubkey::find_program_address(seeds, &ID).0 }
+/// The launch types' fees at launch: Builder 1% split 40/50/10, Meme 0.6% split 0.4% protocol and 0.2% pool.
+const BUILDER_FEES: LaunchFees = LaunchFees { curve_fee_bps: 100, pool_fee_bps: 100, protocol_share_bps: 4_000, creator_share_bps: 5_000, pool_share_bps: 1_000 };
+const MEME_FEES: LaunchFees = LaunchFees { curve_fee_bps: 60, pool_fee_bps: 60, protocol_share_bps: 6_667, creator_share_bps: 0, pool_share_bps: 3_333 };
+/// A fixture's own fees as a launch type, so a coin of that type trades on exactly the fixture's terms.
+fn own_fees(t: Terms) -> LaunchFees { LaunchFees { curve_fee_bps: t.curve_fee_bps, pool_fee_bps: t.pool_fee_bps, protocol_share_bps: t.protocol_share_bps, creator_share_bps: t.creator_share_bps, pool_share_bps: t.pool_share_bps } }
+fn fee_fields(t: &Terms) -> (u16, u16, u16, u16, u16) { (t.curve_fee_bps, t.pool_fee_bps, t.protocol_share_bps, t.creator_share_bps, t.pool_share_bps) }
+fn fields_of(f: LaunchFees) -> (u16, u16, u16, u16, u16) { (f.curve_fee_bps, f.pool_fee_bps, f.protocol_share_bps, f.creator_share_bps, f.pool_share_bps) }
 fn fixture_mint(index:usize)->Keypair {
     let fixtures:Value=serde_json::from_str(include_str!("fixtures/fix-mints.json")).unwrap();
     let row=&fixtures["mints"][index];
@@ -47,8 +54,11 @@ impl Harness {
         Self::with_fixture(terms(),prefund)
     }
     fn with_terms(fixture:Terms) -> Self { Self::with_fixture(fixture,false) }
+    /// The program under test with its launch types set: the fixture's own fees as Builder, so the default Builder
+    /// coin trades on exactly the fixture's terms, and the Meme fees. The config's revision is then 1.
     fn initialized(fixture:Terms) -> Self {
-        Self::initialized_artifact(fixture,"fix_launchpad.so")
+        let mut h=Self::initialized_artifact(fixture,"fix_launchpad.so");let admin=h.creator.insecure_clone();
+        let types=h.types_ix(admin.pubkey(),own_fees(fixture),MEME_FEES);h.send(vec![types],&[&admin]).unwrap();h
     }
     fn initialized_artifact(fixture:Terms,artifact_name:&str) -> Self {
         let mut svm = LiteSVM::new();
@@ -79,9 +89,26 @@ impl Harness {
     fn snipe_ix(&self, admin: Pubkey, snipe: Snipe) -> Instruction {
         ix(instruction::SetSnipe { snipe }, accounts::AdminLaunchTerms { admin, config: self.config, system_program: solana_sdk::system_program::ID })
     }
-    fn create_ix_at(&self, mint: Pubkey, revision: u64) -> Instruction {
+    fn types_ix(&self, admin: Pubkey, builder: LaunchFees, meme: LaunchFees) -> Instruction {
+        ix(instruction::SetLaunchTypes { builder, meme }, accounts::AdminLaunchTerms { admin, config: self.config, system_program: solana_sdk::system_program::ID })
+    }
+    fn revision(&self) -> u64 { decode::<Config>(&self.svm, self.config).revision }
+    fn create_ix_at(&self, mint: Pubkey, revision: u64) -> Instruction { self.create_typed_ix(mint, revision, BUILDER) }
+    fn create_typed_ix(&self, mint: Pubkey, revision: u64, launch_type: u8) -> Instruction {
         let market = pda(&[b"market", mint.as_ref()]); let vault = pda(&[b"vault", market.as_ref()]);
-        ix(instruction::CreateCoin {name:"Fixture Coin".into(),symbol:"FIXT".into(),uri:"https://example.invalid/fixture.json".into(),expected_config_revision:revision},accounts::CreateCoin {creator:self.creator.pubkey(),config:self.config,mint,market,vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID})
+        ix(instruction::CreateCoin {name:"Fixture Coin".into(),symbol:"FIXT".into(),uri:"https://example.invalid/fixture.json".into(),expected_config_revision:revision,launch_type},accounts::CreateCoin {creator:self.creator.pubkey(),config:self.config,mint,market,vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID})
+    }
+    /// A trade on any coin's market, opening its protocol shard first when it has none.
+    fn trade_on(&mut self, mint: Pubkey, data: impl InstructionData, who: &Keypair, token: Pubkey) -> TransactionMetadata {
+        let market = pda(&[b"market", mint.as_ref()]); let shard = protocol_shard(&market); let protocol = pda(&[b"protocol", &[shard]]);
+        if self.svm.get_account(&protocol).is_none() { let open = self.shard_ix(shard); self.send(vec![open], &[]).unwrap(); }
+        let trade = ix(data, accounts::Trade { trader: who.pubkey(), market, mint, vault: pda(&[b"vault", market.as_ref()]), trader_token: token, protocol, token_program: spl_token_2022::ID, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID });
+        self.send(vec![trade], &[who]).unwrap()
+    }
+    /// A market's lamports are its rent, its reserve and its unclaimed creator fees, exactly.
+    fn assert_market_accounting(&self, market: Pubkey) {
+        let m: Market = decode(&self.svm, market); let a = self.svm.get_account(&market).unwrap(); let rent: solana_sdk::rent::Rent = self.svm.get_sysvar();
+        assert_eq!(a.lamports, rent.minimum_balance(a.data.len()) + m.real_sol + m.creator_fees);
     }
     /// A token account for `owner` created in the current slot, so a test can hold the clock where it set it.
     fn token_account_for(&mut self, owner: Pubkey, mint: Pubkey) -> Pubkey {
@@ -106,7 +133,7 @@ impl Harness {
         ix(instruction::CreateProtocolShard { shard }, accounts::CreateProtocolShard { payer: self.payer.pubkey(), protocol: pda(&[b"protocol", &[shard]]), system_program: solana_sdk::system_program::ID })
     }
     fn create_ix(&self) -> Instruction {
-        ix(instruction::CreateCoin {name:"Fixture Coin".into(),symbol:"FIXT".into(),uri:"https://example.invalid/fixture.json".into(),expected_config_revision:0},accounts::CreateCoin {creator:self.creator.pubkey(),config:self.config,mint:self.mint.pubkey(),market:self.market,vault:self.vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID})
+        self.create_typed_ix(self.mint.pubkey(), self.revision(), BUILDER)
     }
     fn advance_slot(&mut self) {let mut clock:Clock=self.svm.get_sysvar();clock.slot=clock.slot.checked_add(1).unwrap();self.svm.set_sysvar(&clock);}
     fn send(&mut self,ixs:Vec<Instruction>,signers:&[&Keypair])->Result<TransactionMetadata,String> {
@@ -245,7 +272,8 @@ fn creation_refuses_non_fix_mints_without_retaining_any_funds() {
 fn mint_suffix_compute_cost_is_measured_with_probe_overhead_removed() {
     let mut measurements=Vec::new();
     for index in 0..3 {
-        let mut h=Harness::initialized_artifact(terms(),"mint-suffix-profile.so");
+        let mut h=Harness::initialized_artifact(terms(),"mint-suffix-profile.so");let admin=h.creator.insecure_clone();
+        let types=h.types_ix(admin.pubkey(),own_fees(terms()),MEME_FEES);h.send(vec![types],&[&admin]).unwrap();
         h.mint=fixture_mint(index);h.market=pda(&[b"market",h.mint.pubkey().as_ref()]);h.vault=pda(&[b"vault",h.market.as_ref()]);
         let creator=h.creator.insecure_clone();let mint=h.mint.insecure_clone();
         let metadata=h.send(vec![h.create_ix()],&[&creator,&mint]).unwrap();
@@ -263,7 +291,8 @@ fn mint_suffix_compute_cost_is_measured_with_probe_overhead_removed() {
 #[test]
 fn real_transaction_logs_are_exported_for_sdk_and_indexer_regressions() {
     let mut h=Harness::new();
-    let mut selected=vec![(0,"initialize_config"),(1,"create_coin")];
+    // The launch types are written between the config and the first coin.
+    let mut selected=vec![(0,"initialize_config"),(2,"create_coin")];
     let lighthouse_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/decoder-fixtures/lighthouse.so");
     if lighthouse_path.exists() {
         let lighthouse = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95".parse::<Pubkey>().unwrap();
@@ -272,7 +301,7 @@ fn real_transaction_logs_are_exported_for_sdk_and_indexer_regressions() {
     // A second coin proves standalone creation still has no purchase or fee.
     let extra_mint=fixture_mint(1);let extra_market=pda(&[b"market",extra_mint.pubkey().as_ref()]);
     let extra_vault=pda(&[b"vault",extra_market.as_ref()]);
-    let create=ix(instruction::CreateCoin {name:"Empty Fixture Coin".into(),symbol:"EMPTY".into(),uri:"https://example.invalid/empty.json".into(),expected_config_revision:0},accounts::CreateCoin {creator:h.creator.pubkey(),config:h.config,mint:extra_mint.pubkey(),market:extra_market,vault:extra_vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID});
+    let create=ix(instruction::CreateCoin {name:"Empty Fixture Coin".into(),symbol:"EMPTY".into(),uri:"https://example.invalid/empty.json".into(),expected_config_revision:h.revision(),launch_type:BUILDER},accounts::CreateCoin {creator:h.creator.pubkey(),config:h.config,mint:extra_mint.pubkey(),market:extra_market,vault:extra_vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID});
     let creator_signer=h.creator.insecure_clone();h.send(vec![create],&[&creator_signer,&extra_mint]).unwrap();
     selected.push((h.recorded.len()-1,"create_coin"));
     let creator=h.creator.insecure_clone();let creator_token=h.token_account(creator.pubkey());
@@ -346,7 +375,7 @@ fn pathological_curve_trades_and_receipt_impact_saturates() {
 fn creation_initializes_curve_with_fixed_supply_and_no_purchase() {
     let mut h=Harness::new();h.assert_sol_accounting();assert_eq!(h.m().phase,0);assert_eq!(h.m().real_sol,0);assert_eq!(h.m().creator_fees,0);
     assert_eq!(h.token_balance(h.vault),terms().total_supply);assert_eq!(decode::<Protocol>(&h.svm,h.protocol).accrued,0);
-    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(),MARKET_BASE_LEN+MARKET_EXT_LEN);assert_eq!(h.svm.get_account(&h.config).unwrap().data.len(),125);
+    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(),MARKET_BASE_LEN+MARKET_EXT_LEN);assert_eq!(h.svm.get_account(&h.config).unwrap().data.len(),CONFIG_BASE_LEN+ConfigExt::INIT_SPACE);
     assert!(h.svm.get_account(&pda(&[b"prices",h.market.as_ref()])).is_none(),"creation allocates no price record");
     let mint_account=h.svm.get_account(&h.mint.pubkey()).unwrap();let mint=StateWithExtensions::<Mint>::unpack(&mint_account.data).unwrap();
     assert_eq!(mint.base.mint_authority,COption::None);assert_eq!(mint.base.freeze_authority,COption::None);assert_eq!(mint.base.supply,terms().total_supply);assert!(mint.get_extension_types().unwrap().len()>=2);
@@ -474,7 +503,7 @@ fn heavy_transactions_keep_every_event_when_logs_truncate() {
     let mint=fixture_mint(1);let market=pda(&[b"market",mint.pubkey().as_ref()]);let vault=pda(&[b"vault",market.as_ref()]);
     let memo:Pubkey="MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr".parse().unwrap();
     let mut spam:Vec<Instruction>=(0..40).map(|_|Instruction {program_id:memo,accounts:vec![AccountMeta::new_readonly(h.payer.pubkey(),true)],data:vec![b'x']}).collect();
-    spam.push(ix(instruction::CreateCoin {name:"Hidden".into(),symbol:"HID".into(),uri:"https://example.invalid/h.json".into(),expected_config_revision:0},accounts::CreateCoin {creator:h.creator.pubkey(),config:h.config,mint:mint.pubkey(),market,vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID}));
+    spam.push(ix(instruction::CreateCoin {name:"Hidden".into(),symbol:"HID".into(),uri:"https://example.invalid/h.json".into(),expected_config_revision:h.revision(),launch_type:BUILDER},accounts::CreateCoin {creator:h.creator.pubkey(),config:h.config,mint:mint.pubkey(),market,vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID}));
     let creator=h.creator.insecure_clone();let meta=h.send(spam,&[&creator,&mint]).unwrap();
     let created=events(&meta).iter().filter(|b|b.starts_with(CoinCreated::DISCRIMINATOR)).map(|b|CoinCreated::deserialize(&mut &b[8..]).unwrap()).collect::<Vec<_>>();
     let truncated=meta.logs.iter().any(|line|line=="Log truncated");
@@ -486,7 +515,7 @@ fn heavy_transactions_keep_every_event_when_logs_truncate() {
 fn compute_units_per_action_are_measured() {
     // Mainnet terms and maximum metadata lengths: the service sizes each action's limit from these.
     let mut h=Harness::initialized(mainnet_terms());let creator=h.creator.insecure_clone();let mint=h.mint.insecure_clone();
-    let create=ix(instruction::CreateCoin {name:"N".repeat(64),symbol:"S".repeat(16),uri:format!("https://example.invalid/{}",String::from("u").repeat(232)),expected_config_revision:0},accounts::CreateCoin {creator:h.creator.pubkey(),config:h.config,mint:h.mint.pubkey(),market:h.market,vault:h.vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID});
+    let create=ix(instruction::CreateCoin {name:"N".repeat(64),symbol:"S".repeat(16),uri:format!("https://example.invalid/{}",String::from("u").repeat(232)),expected_config_revision:h.revision(),launch_type:BUILDER},accounts::CreateCoin {creator:h.creator.pubkey(),config:h.config,mint:h.mint.pubkey(),market:h.market,vault:h.vault,token_program:spl_token_2022::ID,system_program:solana_sdk::system_program::ID,event_authority:event_authority(),program:ID});
     let created=h.send(vec![create],&[&creator,&mint]).unwrap();
     let shard=(protocol_shard(&h.market)+1)%PROTOCOL_SHARDS;let opened=h.send(vec![h.shard_ix(shard)],&[]).unwrap();
     let trader=h.wallet();h.svm.airdrop(&trader.pubkey(),200_000_000_000).unwrap();let token=h.token_account(trader.pubkey());
@@ -587,9 +616,9 @@ fn anti_sniping_steps_down_by_slot_the_same_for_every_buyer_and_keeps_the_tax_in
     let mut h = Harness::initialized(terms()); let admin = h.creator.insecure_clone();
     h.send(vec![h.snipe_ix(admin.pubkey(), SNIPE)], &[&admin]).unwrap();
     let mint = h.mint.insecure_clone();
-    h.send(vec![h.create_ix_at(mint.pubkey(), 1)], &[&admin, &mint]).unwrap();
+    h.send(vec![h.create_ix_at(mint.pubkey(), 2)], &[&admin, &mint]).unwrap();
     let ext = MarketExt::read(&solana_account_info(&h, h.market)).unwrap();
-    assert_eq!((ext.version, ext.launch_type, ext.snipe, ext.extra_fee_bps), (1, 0, SNIPE, 0));
+    assert_eq!((ext.version, ext.launch_type, ext.snipe, ext.extra_fee_bps), (2, BUILDER, SNIPE, 0));
     assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(), MARKET_BASE_LEN + MARKET_EXT_LEN);
     let opens = h.m().created_slot + 1; let base = terms().curve_fee_bps as u64; let t = terms();
     for elapsed in [0u64, 9, 10, 75, 149, 150, 400] {
@@ -638,47 +667,144 @@ fn the_schedule_is_set_by_the_admin_within_bounds_and_creation_checks_the_revisi
     }
     h.send(vec![h.snipe_ix(admin.pubkey(), SNIPE)], &[&admin]).unwrap();
     let mint = h.mint.insecure_clone();
-    assert!(h.send(vec![h.create_ix_at(mint.pubkey(), 0)], &[&admin, &mint]).unwrap_err().contains("ConfigChanged"));
+    assert!(h.send(vec![h.create_ix_at(mint.pubkey(), 1)], &[&admin, &mint]).unwrap_err().contains("ConfigChanged"));
     // Turning the schedule off reaches only coins created afterwards.
-    h.send(vec![h.create_ix_at(mint.pubkey(), 1)], &[&admin, &mint]).unwrap();
+    h.send(vec![h.create_ix_at(mint.pubkey(), 2)], &[&admin, &mint]).unwrap();
     h.send(vec![h.snipe_ix(admin.pubkey(), Snipe::default())], &[&admin]).unwrap();
     assert_eq!(MarketExt::read(&solana_account_info(&h, h.market)).unwrap().snipe, SNIPE);
     let later = fixture_mint(1);
-    h.send(vec![h.create_ix_at(later.pubkey(), 2)], &[&admin, &later]).unwrap();
+    h.send(vec![h.create_ix_at(later.pubkey(), 3)], &[&admin, &later]).unwrap();
     assert_eq!(MarketExt::read(&solana_account_info(&h, pda(&[b"market", later.pubkey().as_ref()]))).unwrap().snipe, Snipe::default());
 }
 
 #[test]
-fn a_coin_created_before_the_upgrade_keeps_its_terms_and_coins_after_it_get_the_schedule() {
-    // The program as deployed on mainnet creates and trades a coin, then the upgrade replaces it in place.
+fn coins_created_before_launch_types_keep_their_terms_and_new_coins_take_a_type() {
+    // The program as deployed on mainnet, its schedule written, creates and trades a coin; the upgrade replaces it in place.
     let mut h = Harness::initialized_artifact(terms(), "fix_launchpad_mainnet.so"); let admin = h.creator.insecure_clone();
-    let mint = h.mint.insecure_clone();
-    h.send(vec![h.create_ix_at(mint.pubkey(), 0)], &[&admin, &mint]).unwrap();
-    let holder = h.wallet(); let token = h.token_account(holder.pubkey());
-    let buy = h.trade_ix(instruction::BuyExactIn { gross: 10_000_000, min_tokens: 1 }, holder.pubkey(), token);
-    let old = h.send(vec![buy], &[&holder]).unwrap();
-    assert!(receipts(&old).is_empty(), "the deployed program emits the first receipt layout");
-    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(), MARKET_BASE_LEN);
-    h.upgrade_to("fix_launchpad.so");
     h.send(vec![h.snipe_ix(admin.pubkey(), SNIPE)], &[&admin]).unwrap();
-    // The old coin reads no schedule: its buys and sells pay its own rate, right after the upgrade.
-    let base = terms().curve_fee_bps as u64;
+    let mint = h.mint.insecure_clone();
+    // The deployed program reads only the arguments it knows, so the launch type after them changes nothing there.
+    h.send(vec![h.create_ix_at(mint.pubkey(), 1)], &[&admin, &mint]).unwrap();
+    assert_eq!(MarketExt::read(&solana_account_info(&h, h.market)).unwrap().launch_type, STANDARD_TYPE);
+    let old_len = h.svm.get_account(&h.market).unwrap().data.len();
+    assert_eq!(old_len, MARKET_BASE_LEN + MARKET_EXT_LEN);
+    let holder = h.wallet(); let token = h.token_account(holder.pubkey());
+    let created = h.m().created_slot; h.set_slot(created + 200);
     let buy = h.trade_ix(instruction::BuyExactIn { gross: 10_000_000, min_tokens: 1 }, holder.pubkey(), token);
-    let r = receipt(&h.send(vec![buy], &[&holder]).unwrap(), 1);
-    assert_eq!((r.snipe_fee, r.protocol_fee + r.creator_fee + r.pool_fee), (0, 10_000_000 * base / 10_000));
+    h.send(vec![buy], &[&holder]).unwrap();
+    h.upgrade_to("fix_launchpad.so");
+    h.send(vec![h.types_ix(admin.pubkey(), BUILDER_FEES, MEME_FEES)], &[&admin]).unwrap();
+    assert_eq!(h.revision(), 2);
+    assert_eq!(h.svm.get_account(&h.config).unwrap().data.len(), CONFIG_BASE_LEN + ConfigExt::INIT_SPACE);
+    let ext = ConfigExt::read(&solana_account_info(&h, h.config)).unwrap();
+    assert_eq!((ext.snipe, ext.builder, ext.meme), (SNIPE, BUILDER_FEES, MEME_FEES), "the schedule stays beside the types");
+    // The old coin keeps the terms it was created with: its buys and sells pay its own rate and lines.
+    let base = terms().curve_fee_bps;
+    let buy = h.trade_ix(instruction::BuyExactIn { gross: 10_000_000, min_tokens: 1 }, holder.pubkey(), token);
+    let r = receipt(&h.send(vec![buy], &[&holder]).unwrap(), 1); let lines = math::fees(10_000_000, base, &terms()).unwrap();
+    assert_eq!((r.protocol_fee, r.creator_fee, r.pool_fee, r.snipe_fee), (lines.protocol, lines.creator, lines.pool, 0));
     let sell = h.trade_ix(instruction::SellExactIn { tokens: 1_000_000, min_sol: 1 }, holder.pubkey(), token);
     receipt(&h.send(vec![sell], &[&holder]).unwrap(), 2);
-    h.assert_sol_accounting();
-    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(), MARKET_BASE_LEN, "a live coin's account is never resized");
-    // A coin created after the upgrade carries the schedule.
+    assert_eq!(fee_fields(&h.m().terms), fee_fields(&terms())); h.assert_sol_accounting();
+    assert_eq!(h.svm.get_account(&h.market).unwrap().data.len(), old_len, "a live coin's account is never resized");
+    // Coins created after the upgrade name their type and carry its fees and the schedule.
+    for (index, launch_type, fees) in [(1, BUILDER, BUILDER_FEES), (2, MEME, MEME_FEES)] {
+        let later = fixture_mint(index); let market = pda(&[b"market", later.pubkey().as_ref()]);
+        h.send(vec![h.create_typed_ix(later.pubkey(), 2, launch_type)], &[&admin, &later]).unwrap();
+        let ext = MarketExt::read(&solana_account_info(&h, market)).unwrap();
+        assert_eq!((ext.version, ext.launch_type, ext.snipe), (2, launch_type, SNIPE));
+        let m: Market = decode(&h.svm, market);
+        assert_eq!(fee_fields(&m.terms), fields_of(fees)); assert_eq!((m.terms.total_supply, m.terms.virtual_sol), (terms().total_supply, terms().virtual_sol));
+        // Its first tradable slot pays the schedule over its own rate, the same for both types.
+        h.set_slot(m.created_slot + 1); let buyer = h.wallet(); let token = h.token_account_for(buyer.pubkey(), later.pubkey());
+        let shard = protocol_shard(&market); if h.svm.get_account(&pda(&[b"protocol", &[shard]])).is_none() { let ix = h.shard_ix(shard); h.send_same_slot(vec![ix], &[]).unwrap(); }
+        let buy = ix(instruction::BuyExactIn { gross: 4_000_000, min_tokens: 1 }, accounts::Trade { trader: buyer.pubkey(), market, mint: later.pubkey(), vault: pda(&[b"vault", market.as_ref()]), trader_token: token, protocol: pda(&[b"protocol", &[shard]]), token_program: spl_token_2022::ID, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID });
+        let r = receipt(&h.send_same_slot(vec![buy], &[&buyer]).unwrap(), 1);
+        assert_eq!(r.snipe_fee, 4_000_000 * 2_500 / 10_000 - 4_000_000 * fees.curve_fee_bps as u64 / 10_000);
+        if launch_type == MEME { assert_eq!(r.creator_fee, 0); }
+        h.assert_market_accounting(market);
+    }
+}
+
+#[test]
+fn builder_and_meme_coins_trade_on_their_own_sealed_fees_and_a_meme_fee_has_no_creator_line() {
+    let mut h = Harness::initialized_artifact(mainnet_terms(), "fix_launchpad.so"); let admin = h.creator.insecure_clone();
+    h.send(vec![h.types_ix(admin.pubkey(), BUILDER_FEES, MEME_FEES)], &[&admin]).unwrap();
+    let coins = [(fixture_mint(0), BUILDER, BUILDER_FEES), (fixture_mint(1), MEME, MEME_FEES)];
+    for (mint, launch_type, fees) in &coins {
+        h.send(vec![h.create_typed_ix(mint.pubkey(), 1, *launch_type)], &[&admin, mint]).unwrap();
+        let market = pda(&[b"market", mint.pubkey().as_ref()]); let m: Market = decode(&h.svm, market);
+        assert_eq!(fee_fields(&m.terms), fields_of(*fees)); assert_eq!(MarketExt::read(&solana_account_info(&h, market)).unwrap().launch_type, *launch_type);
+    }
+    let trader = h.wallet(); h.svm.airdrop(&trader.pubkey(), 200_000_000_000).unwrap();
+    for (mint, launch_type, fees) in &coins {
+        let mint = mint.pubkey(); let market = pda(&[b"market", mint.as_ref()]); let terms = decode::<Market>(&h.svm, market).terms;
+        let token = h.token_account_for(trader.pubkey(), mint);
+        for gross in [1_000_003u64, 777_777_777, 3_000_000_001] {
+            let r = receipt(&h.trade_on(mint, instruction::BuyExactIn { gross, min_tokens: 1 }, &trader, token), 1);
+            let lines = math::fees(gross, fees.curve_fee_bps, &terms).unwrap(); let total = gross * fees.curve_fee_bps as u64 / 10_000;
+            assert_eq!((r.protocol_fee, r.creator_fee, r.pool_fee), (lines.protocol, lines.creator, lines.pool));
+            assert_eq!((r.protocol_fee + r.creator_fee + r.pool_fee, r.protocol_fee), (total, total * fees.protocol_share_bps as u64 / 10_000));
+            if *launch_type == MEME { assert_eq!(r.creator_fee, 0, "a Meme fee is the protocol's and the pool's"); }
+            else { assert_eq!(r.pool_fee, total * fees.pool_share_bps as u64 / 10_000); }
+        }
+        let held = h.token_balance(token);
+        let r = receipt(&h.trade_on(mint, instruction::SellExactIn { tokens: held / 3, min_sol: 1 }, &trader, token), 2);
+        let lines = math::fees(r.gross, fees.curve_fee_bps, &terms).unwrap();
+        assert_eq!((r.protocol_fee, r.creator_fee, r.pool_fee), (lines.protocol, lines.creator, lines.pool));
+        h.assert_market_accounting(market);
+    }
+    // The Builder coin's creator claims its lines; the Meme coin holds none to claim.
+    let builder = pda(&[b"market", coins[0].0.pubkey().as_ref()]); let meme = pda(&[b"market", coins[1].0.pubkey().as_ref()]);
+    assert_eq!(decode::<Market>(&h.svm, meme).creator_fees, 0);
+    let owed = decode::<Market>(&h.svm, builder).creator_fees; assert!(owed > 0);
+    let before = h.balance(admin.pubkey());
+    h.send(vec![ix(instruction::ClaimCreatorFees {}, accounts::ClaimCreatorFees { creator: admin.pubkey(), market: builder, event_authority: event_authority(), program: ID })], &[&admin]).unwrap();
+    assert_eq!(h.balance(admin.pubkey()) - before, owed); h.assert_market_accounting(builder);
+}
+
+#[test]
+fn launch_types_are_set_by_the_admin_and_every_new_coin_names_one() {
+    let mut h = Harness::initialized_artifact(terms(), "fix_launchpad.so"); let admin = h.creator.insecure_clone(); let stranger = h.wallet();
+    let mint = h.mint.insecure_clone();
+    assert!(h.send(vec![h.create_typed_ix(mint.pubkey(), 0, BUILDER)], &[&admin, &mint]).unwrap_err().contains("InvalidLaunchType"), "no type before the admin sets them");
+    assert!(h.send(vec![h.types_ix(stranger.pubkey(), BUILDER_FEES, MEME_FEES)], &[&stranger]).unwrap_err().contains("Unauthorized"));
+    for bad in [LaunchFees { creator_share_bps: 4_999, ..BUILDER_FEES }, LaunchFees { curve_fee_bps: 10_000, ..MEME_FEES }] {
+        assert!(h.send(vec![h.types_ix(admin.pubkey(), bad, MEME_FEES)], &[&admin]).unwrap_err().contains("InvalidTerms"), "{bad:?}");
+        assert!(h.send(vec![h.types_ix(admin.pubkey(), BUILDER_FEES, bad)], &[&admin]).unwrap_err().contains("InvalidTerms"), "{bad:?}");
+    }
+    h.send(vec![h.types_ix(admin.pubkey(), BUILDER_FEES, MEME_FEES)], &[&admin]).unwrap();
+    assert_eq!(h.revision(), 1);
+    for launch_type in [STANDARD_TYPE, 3] {
+        assert!(h.send(vec![h.create_typed_ix(mint.pubkey(), 1, launch_type)], &[&admin, &mint]).unwrap_err().contains("InvalidLaunchType"), "type {launch_type}");
+    }
+    assert!(h.send(vec![h.create_typed_ix(mint.pubkey(), 0, MEME)], &[&admin, &mint]).unwrap_err().contains("ConfigChanged"));
+    h.send(vec![h.create_typed_ix(mint.pubkey(), 1, MEME)], &[&admin, &mint]).unwrap();
+    // A new curve reaches coins created later, each on its own type's fees; the first coin keeps everything it had.
+    let mut curve = terms(); curve.virtual_sol = 200_000_000;
+    h.send(vec![ix(instruction::UpdateConfig { terms: curve, paused: false }, accounts::AdminConfig { admin: admin.pubkey(), config: h.config })], &[&admin]).unwrap();
     let later = fixture_mint(1); let market = pda(&[b"market", later.pubkey().as_ref()]);
-    h.send(vec![h.create_ix_at(later.pubkey(), 1)], &[&admin, &later]).unwrap();
-    assert_eq!(MarketExt::read(&solana_account_info(&h, market)).unwrap().snipe, SNIPE);
-    let created: Market = decode(&h.svm, market); h.set_slot(created.created_slot + 1);
-    let buyer = h.wallet(); let vault = pda(&[b"vault", market.as_ref()]);
-    let token = h.token_account_for(buyer.pubkey(), later.pubkey());
-    let buy = ix(instruction::BuyExactIn { gross: 4_000_000, min_tokens: 1 }, accounts::Trade { trader: buyer.pubkey(), market, mint: later.pubkey(), vault, trader_token: token, protocol: pda(&[b"protocol", &[protocol_shard(&market)]]), token_program: spl_token_2022::ID, system_program: solana_sdk::system_program::ID, event_authority: event_authority(), program: ID });
-    let shard = protocol_shard(&market); if h.svm.get_account(&pda(&[b"protocol", &[shard]])).is_none() { let ix = h.shard_ix(shard); h.send_same_slot(vec![ix], &[]).unwrap(); }
-    let r = receipt(&h.send_same_slot(vec![buy], &[&buyer]).unwrap(), 1);
-    assert_eq!(r.snipe_fee, 4_000_000 * 2_500 / 10_000 - 4_000_000 * base / 10_000);
+    h.send(vec![h.create_typed_ix(later.pubkey(), 2, BUILDER)], &[&admin, &later]).unwrap();
+    let (first, second) = (h.m().terms, decode::<Market>(&h.svm, market).terms);
+    assert_eq!((first.virtual_sol, fee_fields(&first)), (terms().virtual_sol, fields_of(MEME_FEES)));
+    assert_eq!((second.virtual_sol, fee_fields(&second)), (200_000_000, fields_of(BUILDER_FEES)));
+    // Setting the schedule keeps the types, and the types keep the schedule.
+    h.send(vec![h.snipe_ix(admin.pubkey(), SNIPE)], &[&admin]).unwrap();
+    let ext = ConfigExt::read(&solana_account_info(&h, h.config)).unwrap();
+    assert_eq!((ext.version, ext.snipe, ext.builder, ext.meme), (2, SNIPE, BUILDER_FEES, MEME_FEES));
+}
+
+#[test]
+fn a_fee_with_no_creator_line_keeps_its_rounding_in_the_pool() {
+    let meme = MEME_FEES.terms(mainnet_terms());
+    for gross in [0u64, 1, 166, 167, 999, 1_000_003, 777_777_777, u64::MAX / 10_000] {
+        let lines = math::fees(gross, meme.curve_fee_bps, &meme).unwrap();
+        assert_eq!((lines.creator, lines.protocol + lines.pool), (0, lines.total));
+        assert_eq!(lines.protocol, ((lines.total as u128) * 6_667 / 10_000) as u64);
+    }
+    // Terms with a creator line split exactly as before.
+    for gross in [1u64, 999, 1_000_003] {
+        let lines = math::fees(gross, 100, &mainnet_terms()).unwrap();
+        assert_eq!(lines.pool, ((lines.total as u128) * mainnet_terms().pool_share_bps as u128 / 10_000) as u64);
+    }
 }

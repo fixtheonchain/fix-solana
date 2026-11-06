@@ -15,7 +15,7 @@ the last curve token. Every trade pays one fee that is fixed for the coin's whol
 Features ship as extensions: separate programs that route trades into this one by CPI, registered without an upgrade
 of the core. Calls arrive as the first extension.
 
-Anchor 0.31.1 · Token-2022 · 14 instructions · 14 LiteSVM money tests
+Anchor 0.31.1 · Token-2022 · 15 instructions · 20 LiteSVM money tests
 
 ## A coin's life
 
@@ -40,13 +40,29 @@ flowchart LR
 
 - The fee terms (rate per phase and the split) are copied into the coin at creation and never change for that coin.
 - One total fee per trade, split between protocol, creator and a share that stays in the pool. Protocol and pool
-  shares round down and the creator receives the remainder.
+  shares round down and the creator receives the remainder; a fee with no creator line (a Meme launch) leaves the
+  remainder in the pool line.
 - Every trade, claim and graduation emits an itemized `ReceiptV2`: `gross`, `protocol_fee`, `creator_fee`, `pool_fee`,
   `net`, `tokens`, `refund`, `price_before`, `price_after`, `price_impact_bps`, `extension`, `extension_fee`,
   `snipe_fee` and `extra_fee`. Transactions from before the anti-sniping upgrade carry the first layout, `Receipt`.
   Quotes match execution exactly; a buy that lands after its quoted slot can only pay the same rate or less.
 - Protocol fees accrue to 64 PDAs seeded `["protocol", shard]`, credited in the instruction that charges them, so
   markets share no write lock. There is no withdrawal instruction.
+
+## Launch types
+
+Every coin is a Builder or a Meme launch, chosen at creation (`create_coin`'s `launch_type`, 1 or 2). It takes that
+type's fees from the config into its own terms, sealed like every other term, and the type is written in its
+`MarketExt`. Supply, curve and anti-sniping schedule are the same for both.
+
+| Type | Fee per trade | Protocol | Creator | Pool |
+| --- | --- | --- | --- | --- |
+| Builder | 1% | 4,000 bps of the fee (0.4%) | 5,000 bps (0.5%) | 1,000 bps (0.1%) |
+| Meme | 0.6% | 6,667 bps of the fee (0.4%) | none | the rest (0.2%) |
+
+`set_launch_types(builder, meme)` writes both types' fees for coins created next, each checked as full terms on the
+config's curve ([`scripts/launch-terms.json`](scripts/launch-terms.json)). Coins created before launch types keep
+their terms and read as type 0.
 
 ## Anti-sniping
 
@@ -85,9 +101,9 @@ sequenceDiagram
 
 | Group | Instructions |
 | --- | --- |
-| Config | `initialize_config(terms)`, `update_config(terms, paused)`, `set_snipe(snipe)`, `propose_admin(new_admin)`, `accept_admin`, `create_protocol_shard(shard)` |
+| Config | `initialize_config(terms)`, `update_config(terms, paused)`, `set_snipe(snipe)`, `set_launch_types(builder, meme)`, `propose_admin(new_admin)`, `accept_admin`, `create_protocol_shard(shard)` |
 | Extensions | `register_extension(program_id, share_bps, recipient)`, `set_extension_paused(paused)`, `remove_extension` |
-| Coins and trading | `create_coin(name, symbol, uri, expected_config_revision)`, `buy_exact_in(gross, min_tokens)`, `buy_exact_out(tokens, max_gross)`, `sell_exact_in(tokens, min_sol)`, `sell_exact_out(sol, max_tokens)`, `claim_creator_fees` |
+| Coins and trading | `create_coin(name, symbol, uri, expected_config_revision, launch_type)`, `buy_exact_in(gross, min_tokens)`, `buy_exact_out(tokens, max_gross)`, `sell_exact_in(tokens, min_sol)`, `sell_exact_out(sol, max_tokens)`, `claim_creator_fees` |
 
 Config updates and pause apply to coins created from then on. No admin instruction touches a live coin's market,
 fees or funds.
@@ -96,7 +112,7 @@ fees or funds.
 
 | Account | Seeds | Holds |
 | --- | --- | --- |
-| `Config` | `["config"]` | Revision, admin, pending admin, pause flag, the terms new coins copy; after them, the anti-sniping schedule (`ConfigExt`) |
+| `Config` | `["config"]` | Revision, admin, pending admin, pause flag, the supply and curve new coins copy; after them, the anti-sniping schedule and the Builder and Meme fees (`ConfigExt`) |
 | `Protocol` | `["protocol", shard]`, shard 0–63 | Accrued protocol fees |
 | `Market` | `["market", mint]` | Mint, creator, the coin's locked terms, phase, curve and pool reserves, burned tokens, creator fees, receipt sequence, `created_slot`; after them, 32 bytes of later terms (`MarketExt`: the schedule, the launch type, the extra fee), all zero on coins created before |
 | vault | `["vault", market]` | The market's Token-2022 token account |

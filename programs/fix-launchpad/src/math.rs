@@ -32,7 +32,9 @@ pub struct Fees { pub total: u64, pub protocol: u64, pub creator: u64, pub pool:
 pub fn fees(gross: u64, rate: u16, terms: &Terms) -> Result<Fees> {
     let total = mul_div(gross, rate as u64, BPS)?;
     let protocol = mul_div(total, terms.protocol_share_bps as u64, BPS)?;
-    let pool = mul_div(total, terms.pool_share_bps as u64, BPS)?;
+    // Terms with no creator line (a Meme launch) keep the rounding remainder in the pool line, so no creator line
+    // ever holds a lamport nobody can claim.
+    let pool = if terms.creator_share_bps == 0 { sub(total, protocol)? } else { mul_div(total, terms.pool_share_bps as u64, BPS)? };
     let creator = sub(sub(total, protocol)?, pool)?;
     Ok(Fees { total, protocol, creator, pool, snipe: 0 })
 }

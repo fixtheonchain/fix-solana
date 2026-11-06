@@ -133,13 +133,39 @@ pub const MARKET_EXT_LEN: usize = 32;
 /// The config's data ends at its `Config` struct; the launch terms added later follow it (`ConfigExt`).
 pub const CONFIG_BASE_LEN: usize = 8 + Config::INIT_SPACE;
 
+/// Coins created before launch types: the config's terms at their creation.
+pub const STANDARD: u8 = 0;
+/// A Builder launch: a creator line in every fee.
+pub const BUILDER: u8 = 1;
+/// A Meme launch: a lower fee with no creator line.
+pub const MEME: u8 = 2;
+
+/// One launch type's fee: its curve and pool rates and how each fee splits. The curve itself is the config's.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, Debug, PartialEq, Eq, InitSpace)]
+pub struct LaunchFees { pub curve_fee_bps: u16, pub pool_fee_bps: u16, pub protocol_share_bps: u16, pub creator_share_bps: u16, pub pool_share_bps: u16 }
+impl LaunchFees {
+    /// The terms a coin of this type is created with: the config's supply and curve with these fees.
+    pub fn terms(&self, base: Terms) -> Terms {
+        Terms { curve_fee_bps: self.curve_fee_bps, pool_fee_bps: self.pool_fee_bps, protocol_share_bps: self.protocol_share_bps, creator_share_bps: self.creator_share_bps, pool_share_bps: self.pool_share_bps, ..base }
+    }
+    /// A set type's shares sum to 10,000, so all zero means the config has none.
+    pub fn is_set(&self) -> bool { *self != Self::default() }
+}
+
 /// Per-coin terms added after launch, written once at creation right after the market's `Market` data and never
 /// changed. Coins created before carry none and read as all zero: no schedule, the standard type, no extra fee.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct MarketExt { pub version: u8, pub launch_type: u8, pub snipe: Snipe, pub extra_fee_bps: u16 }
 /// The launch terms the config holds for coins not yet created, after its `Config` data.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, Debug, PartialEq, Eq, InitSpace)]
-pub struct ConfigExt { pub version: u8, pub snipe: Snipe }
+pub struct ConfigExt { pub version: u8, pub snipe: Snipe, pub builder: LaunchFees, pub meme: LaunchFees }
+impl ConfigExt {
+    /// The fees a new coin of `launch_type` is created with, when that type is set.
+    pub fn fees(&self, launch_type: u8) -> Option<LaunchFees> {
+        let fees = match launch_type { BUILDER => self.builder, MEME => self.meme, _ => return None };
+        fees.is_set().then_some(fees)
+    }
+}
 
 /// Reads the bytes after `base`, zero-filled to `T`'s size, so a shorter or missing tail reads as defaults.
 fn read_tail<T: AnchorDeserialize>(info: &AccountInfo, base: usize) -> Result<T> {

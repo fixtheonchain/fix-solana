@@ -1,3 +1,7 @@
 {
-  "antiSnipe": { "startBps": 2500, "stepSlots": 10, "steps": 15 }
+  "antiSnipe": { "startBps": 2500, "stepSlots": 10, "steps": 15 },
+  "launchTypes": {
+    "builder": { "curveFeeBps": 100, "poolFeeBps": 100, "protocolShareBps": 4000, "creatorShareBps": 5000, "poolShareBps": 1000 },
+    "meme": { "curveFeeBps": 60, "poolFeeBps": 60, "protocolShareBps": 6667, "creatorShareBps": 0, "poolShareBps": 3333 }
+  }
 }

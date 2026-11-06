@@ -434,6 +434,9 @@
     },
     {
       "name": "create_coin",
+      "docs": [
+        "`launch_type` is `BUILDER` or `MEME`; the coin takes that type's fees on the config's curve, sealed."
+      ],
       "discriminator": [
         208,
         85,
@@ -575,6 +578,10 @@
         {
           "name": "expected_config_revision",
           "type": "u64"
+        },
+        {
+          "name": "launch_type",
+          "type": "u8"
         }
       ]
     },
@@ -1284,6 +1291,74 @@
       ]
     },
     {
+      "name": "set_launch_types",
+      "docs": [
+        "Admin only. The fees Builder and Meme coins are created with from now on, each on the config's supply and",
+        "curve; live coins keep theirs."
+      ],
+      "discriminator": [
+        212,
+        29,
+        44,
+        202,
+        85,
+        56,
+        214,
+        230
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "builder",
+          "type": {
+            "defined": {
+              "name": "LaunchFees"
+            }
+          }
+        },
+        {
+          "name": "meme",
+          "type": {
+            "defined": {
+              "name": "LaunchFees"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "set_snipe",
       "docs": [
         "Admin only. The anti-sniping schedule copied into every coin created from now on; live coins keep theirs."
@@ -1596,6 +1671,11 @@
       "code": 6017,
       "name": "InvalidExtensionShare",
       "msg": "An extension share is at most 10,000 bps of the protocol part"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidLaunchType",
+      "msg": "A coin is a Builder (1) or Meme (2) launch, and its type must be set in the config"
     }
   ],
   "types": [
@@ -1754,6 +1834,37 @@
           {
             "name": "pool_price",
             "type": "u128"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LaunchFees",
+      "docs": [
+        "One launch type's fee: its curve and pool rates and how each fee splits. The curve itself is the config's."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "curve_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "pool_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "protocol_share_bps",
+            "type": "u16"
+          },
+          {
+            "name": "creator_share_bps",
+            "type": "u16"
+          },
+          {
+            "name": "pool_share_bps",
+            "type": "u16"
           }
         ]
       }
